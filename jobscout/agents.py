@@ -222,11 +222,23 @@ def resolve_board(llm: LLM, company: Company) -> Dict[str, str]:
 
 %s
 
-What counts as the right answer, best first:
-  1. The employer's applicant-tracking board — e.g. boards.greenhouse.io/<slug>,
-     jobs.lever.co/<slug>, jobs.ashbyhq.com/<slug>, <slug>.myworkdayjobs.com/...,
-     jobs.smartrecruiters.com/<slug>, careers.<company>.com
-  2. For a lab, agency or university: the careers section on their .gov/.edu site.
+STRONGLY PREFER AN APPLICANT-TRACKING BOARD over the company's own careers page.
+Boards on Greenhouse, Lever, Ashby, SmartRecruiters and Workable can be read
+directly through a public API, which is complete and exact; a marketing careers
+page is usually a JavaScript shell that reads as empty. So:
+
+  1. BEST — the ATS board itself:
+       boards.greenhouse.io/<slug>        job-boards.greenhouse.io/<slug>
+       jobs.lever.co/<slug>               jobs.ashbyhq.com/<slug>
+       jobs.smartrecruiters.com/<slug>    apply.workable.com/<slug>
+     A page like acme.com/careers very often EMBEDS one of these. Fetch the
+     careers page and look for the board behind it — an iframe, a link, or an
+     "apply" button pointing at one of those hosts. Follow it and give me THAT
+     URL. The <slug> is a short handle ("descarteslabs"), never a domain
+     ("descarteslabs.com").
+  2. Next best — a Workday or iCIMS board: <slug>.myworkdayjobs.com/...,
+     <slug>.icims.com
+  3. Otherwise — the careers section on their own .gov/.edu/company site.
 
 Verify the page exists by fetching it. If you cannot find a real board, say so —
 "" is a correct and useful answer, an invented URL is not.

@@ -224,6 +224,59 @@ def dedupe(postings: Sequence[Posting]) -> List[Posting]:
     return kept
 
 
+#: Words that appear in every other job title and carry no signal.
+_TITLE_STOPWORDS = {
+    "senior", "sr", "staff", "principal", "lead", "junior", "jr", "associate",
+    "the", "and", "or", "of", "for", "a", "an", "in", "at", "to", "with",
+    "i", "ii", "iii", "iv", "v", "1", "2", "3", "4", "5",
+    "full", "time", "fulltime", "parttime", "part", "contract", "intern",
+    "remote", "hybrid", "onsite", "us", "usa", "level", "new", "grad",
+}
+
+
+def _tokens(text: str) -> set:
+    words = re.split(r"[^a-z0-9+#]+", (text or "").lower())
+    return {w for w in words if w and w not in _TITLE_STOPWORDS and len(w) > 1}
+
+
+def title_relevance(title: str, profile: Dict) -> float:
+    """How much a job title overlaps what this candidate is aiming at, 0-1.
+
+    Deliberately crude and free. It is used only to narrow a very large board
+    before anything expensive happens — never to make a final decision, which is
+    the ranking agent's job.
+    """
+    title_tokens = _tokens(title)
+    if not title_tokens:
+        return 0.0
+    wanted = set()
+    for key in ("target_titles", "adjacent_titles", "core_skills", "domains"):
+        value = profile.get(key) or []
+        if isinstance(value, str):
+            value = [value]
+        for item in value:
+            wanted |= _tokens(str(item))
+    if not wanted:
+        return 1.0  # no profile to compare against: keep everything
+    return len(title_tokens & wanted) / float(len(title_tokens))
+
+
+def narrow_to_relevant(postings: Sequence[Posting], profile: Dict,
+                       keep: int) -> Tuple[List[Posting], int]:
+    """Trim an employer's whole board down to the plausibly-relevant part.
+
+    Returns ``(kept, dropped_count)``. Below ``keep`` postings nothing is cut —
+    a short list is cheap to rank properly, and an unusual title is exactly the
+    kind of thing a crude token overlap would throw away by mistake.
+    """
+    postings = list(postings)
+    if len(postings) <= keep:
+        return postings, 0
+    scored = sorted(postings, key=lambda p: -title_relevance(p.title, profile))
+    kept = [p for p in scored[:keep] if title_relevance(p.title, profile) > 0]
+    return kept, len(postings) - len(kept)
+
+
 def excluded_company(posting: Posting, exclude: Iterable[str]) -> bool:
     keys = {re.sub(r"\s+", " ", e.strip().lower()) for e in exclude if e.strip()}
     if not keys:

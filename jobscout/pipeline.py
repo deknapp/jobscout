@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from . import agents, filters, scoring, sources
+from . import agents, fetchers, filters, scoring, sources
 from .board import Board
 from .companies import Company, NO_BOARD, RESOLVED, Registry
 from .config import Settings
@@ -157,29 +157,70 @@ def resolve_boards(settings: Settings, llm: LLM, registry: Registry) -> int:
     return resolved
 
 
+def _scan_one(settings: Settings, llm: LLM, company: Company,
+              profile: Dict[str, Any]) -> Tuple[List[Posting], str, int]:
+    """Read one employer's board, preferring its API over an agent.
+
+    Returns ``(postings, how, narrowed)``. An ATS API returns the *whole* board,
+    so the free location filter and a title-overlap trim run here, before the
+    postings reach anything that costs money.
+    """
+    direct = fetchers.fetch(company.name, company.careers_url)
+    if direct is not None and direct.ok:
+        raw = direct.postings
+        in_area = []
+        for posting in raw:
+            accepted, mode, _reason = filters.check_location(posting, settings.location)
+            if accepted:
+                posting.work_mode = mode
+                in_area.append(posting)
+        kept, trimmed = filters.narrow_to_relevant(
+            in_area, profile, settings.max_postings_per_company)
+        narrowed = (len(raw) - len(in_area)) + trimmed
+        return kept, "%s API" % (direct.ats or "board"), narrowed
+
+    # No API for this host (or the API failed): fall back to the agent.
+    if direct is not None and not direct.ok:
+        company.note = direct.note
+    found = agents.scan_board(llm, company, profile, settings.location,
+                              settings.max_age_days)
+    return found, "agent", 0
+
+
 def scan_boards(settings: Settings, llm: LLM, registry: Registry,
-                profile: Dict[str, Any]) -> Tuple[List[Posting], List[str]]:
+                profile: Dict[str, Any]
+                ) -> Tuple[List[Posting], List[str], Dict[str, int]]:
     """Read the boards we know about and collect what is on them."""
     targets = registry.scannable(settings.rescan_after_days)[:settings.max_scans_per_run]
+    stats: Dict[str, int] = {}
     if not targets:
-        return [], []
+        return [], [], stats
     _log("reading %d job board(s)…" % len(targets))
     postings: List[Posting] = []
     errors: List[str] = []
-    for company, found, error in _parallel(
-            targets,
-            lambda c: agents.scan_board(llm, c, profile, settings.location,
-                                        settings.max_age_days),
+    narrowed_total = 0
+    via_api = 0
+    for company, outcome, error in _parallel(
+            targets, lambda c: _scan_one(settings, llm, c, profile),
             settings.max_workers):
         if error is not None:
             errors.append("%s: %s" % (company.name, str(error)[:160]))
             continue
-        found = found or []
+        found, how, narrowed = outcome
+        narrowed_total += narrowed
+        if how.endswith("API"):
+            via_api += 1
         registry.mark_scanned(company, len(found))
+        _log("  %-34s %2d role(s) via %s" % (company.name[:34], len(found), how))
         postings.extend(found)
     registry.save()
-    _log("found %d raw posting(s) across %d board(s)" % (len(postings), len(targets)))
-    return postings, errors
+    stats["boards_read"] = len(targets)
+    stats["boards_via_api"] = via_api
+    stats["narrowed_at_source"] = narrowed_total
+    _log("found %d relevant posting(s) across %d board(s) (%d read directly via "
+         "an ATS API; %d off-location or off-target roles skipped for free)"
+         % (len(postings), len(targets), via_api, narrowed_total))
+    return postings, errors, stats
 
 
 # --- filtering -------------------------------------------------------------
@@ -311,8 +352,9 @@ def find(settings: Settings, *, refresh_profile: bool = False,
 
     expand_registry(settings, llm, registry, profile, force=expand)
     resolve_boards(settings, llm, registry)
-    raw, scan_errors = scan_boards(settings, llm, registry, profile)
+    raw, scan_errors, scan_stats = scan_boards(settings, llm, registry, profile)
     result.errors.extend(scan_errors)
+    result.stats.update(scan_stats)
 
     kept, dropped, stats = prefilter(raw, settings, history, corpus, today)
     result.dropped.extend(dropped)

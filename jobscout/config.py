@@ -152,6 +152,10 @@ class Settings:
     max_verify_per_run: int = 20
     #: Do not re-read an employer's board more often than this.
     rescan_after_days: int = 3
+    #: A single employer's board can hold thousands of roles. Above this many
+    #: (after the free location filter), the board is narrowed by title overlap
+    #: before anything expensive happens.
+    max_postings_per_company: int = 25
     #: Concurrency for the per-query / per-candidate agent calls.
     max_workers: int = 4
     #: Seconds before a single agent call is abandoned.
@@ -298,6 +302,7 @@ def load_settings(require_applications: bool = True) -> Settings:
         max_scans_per_run=_env_int("JOBSCOUT_MAX_SCANS_PER_RUN", 12),
         max_verify_per_run=_env_int("JOBSCOUT_MAX_VERIFY_PER_RUN", 20),
         rescan_after_days=_env_int("JOBSCOUT_RESCAN_AFTER_DAYS", 3),
+        max_postings_per_company=_env_int("JOBSCOUT_MAX_POSTINGS_PER_COMPANY", 25),
         weight_fit=_env_float("JOBSCOUT_WEIGHT_FIT", 0.45),
         weight_likelihood=_env_float("JOBSCOUT_WEIGHT_LIKELIHOOD", 0.30),
         weight_recency=_env_float("JOBSCOUT_WEIGHT_RECENCY", 0.25),

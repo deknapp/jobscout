@@ -11,7 +11,7 @@ import re
 
 import pytest
 
-from jobscout import pipeline
+from jobscout import fetchers, pipeline
 from jobscout.config import LocationPolicy, Settings
 from jobscout.llm import LLM, MockBackend
 
@@ -107,6 +107,9 @@ def settings(tmp_path, monkeypatch):
     monkeypatch.setattr(
         LLM, "from_settings",
         classmethod(lambda cls, s: LLM(backend, model_cheap="m", model_strong="M")))
+    # No test touches the network: pretend this host has no ATS API, which
+    # exercises the agent-driven fallback path.
+    monkeypatch.setattr(fetchers, "fetch", lambda company, url: None)
 
     return Settings(
         applications_dir=tmp_path / "apps",
