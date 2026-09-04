@@ -38,10 +38,14 @@ jobscout is built the other way round:
 1. **Read what you have already written.** Your resumes, cover letters and the
    job descriptions you targeted say more about what you want than any form you
    would fill in.
-2. **Decide who to ask.** An agent proposes real employers who plausibly want
-   this background *and* satisfy your location rule — big local institutions,
-   remote-first companies in your domain, places whose work matches what makes
-   you unusual.
+2. **Decide who to ask.** Agents propose real employers who plausibly want this
+   background *and* satisfy your location rule — searching **five different
+   angles at once**: institutions physically in your area, remote-first
+   companies in your domain, product matches against what is unusual on your CV,
+   adjacent industries that hire your skills under another name, and recently
+   funded startups. Asking one general question repeatedly just returns the same
+   famous names; asking five different ones covers the map, and running them in
+   parallel means breadth costs no extra waiting.
 3. **Find each employer's real board, once.** Greenhouse, Lever, Ashby, Workday,
    SmartRecruiters, iCIMS, or a `.gov`/`.edu` careers page. That URL is cached
    forever, so the expensive step happens one time per employer.
@@ -75,7 +79,17 @@ Ashby            api.ashbyhq.com/posting-api/job-board/<slug>
 SmartRecruiters  api.smartrecruiters.com/v1/companies/<slug>/postings
 Workable         apply.workable.com/api/v1/widget/accounts/<slug>
 Workday          <tenant>.<dc>.myworkdayjobs.com/wday/cxs/<tenant>/<site>/jobs
+UltiPro / UKG    recruiting.ultipro.com/<app>/JobBoard/<id>/JobBoardView/...
+Breezy           <slug>.breezy.hr/json
+Rippling         api.rippling.com/platform/api/ats/v1/board/<slug>/jobs
 ```
+
+**Vanity careers domains are followed to the ATS behind them.** `jobs.<company>.com`
+is usually a wrapper: NVIDIA's is a Workday board, ARA's simply redirects to
+UltiPro. Board resolution follows the redirect and reads the page's own links,
+and a repair pass does the same for boards already resolved to a marketing page.
+It costs one page fetch and no model call, and it is the difference between an
+employer being searched and being searched in name only.
 
 **iCIMS** is the exception that proves the rule. It publishes no JSON API — but
 unlike the JavaScript boards it renders its listings *server-side*, so the jobs
