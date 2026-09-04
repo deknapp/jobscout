@@ -268,6 +268,8 @@
           <label><input type="checkbox" value="contract"> contract</label>
           <label><input type="checkbox" value="internship"> internship</label>
         </div></label>
+      <label class="field">Minimum fit <span class="val" id="v-minfit"></span>
+        <input type="range" id="r-minfit" min="0" max="90" step="5"></label>
       <label class="field inline">
         <input type="checkbox" id="r-clearance"> Exclude roles needing an active clearance</label>
       <label class="field">Title must NOT contain
@@ -483,6 +485,8 @@ async function showFolder(path) {
 function renderRequirements(r) {
   $("r-salmin").value = r.salary_min == null ? "" : r.salary_min;
   $("r-salmax").value = r.salary_max == null ? "" : r.salary_max;
+  $("r-minfit").value = r.min_fit || 0;
+  $("v-minfit").textContent = r.min_fit ? (r.min_fit + "/100") : "off";
   $("r-clearance").checked = !!r.exclude_clearance_required;
   $("r-extitle").value = (r.exclude_title_words || []).join(", ");
   $("r-reqtitle").value = (r.require_title_words || []).join(", ");
@@ -510,6 +514,7 @@ async function saveRequirements() {
   await api("/api/requirements", "POST", {
     salary_min: money("r-salmin"),
     salary_max: money("r-salmax"),
+    min_fit: Number($("r-minfit").value) || null,
     employment_types: types,
     exclude_clearance_required: $("r-clearance").checked,
     exclude_title_words: $("r-extitle").value,
@@ -675,6 +680,10 @@ async function pushWeights() {
 
 ["w-fit", "w-lik", "w-rec", "w-hl"].forEach((id) => $(id).addEventListener("change", pushWeights));
 ["f-status", "f-mode", "f-showfiltered"].forEach((id) => $(id).addEventListener("change", renderRoles));
+$("r-minfit").addEventListener("input", () => {
+  const v = Number($("r-minfit").value);
+  $("v-minfit").textContent = v ? (v + "/100") : "off";
+});
 $("r-save").addEventListener("click", saveRequirements);
 $("setup-save").addEventListener("click", saveSetup);
 $("use-saved").addEventListener("change", saveSetup);

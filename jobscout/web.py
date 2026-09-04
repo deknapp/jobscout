@@ -285,6 +285,10 @@ class App:
             # Re-check the current requirements on every read, so moving a
             # filter shows its effect at once instead of only on the next run.
             ok, why = settings.requirements.check(posting)
+            floor = settings.requirements.min_fit or 0
+            if ok and floor and posting.stage == "scored" and posting.fit_score < floor:
+                ok, why = False, ("fit %d/100, below your floor of %d"
+                                  % (posting.fit_score, floor))
             # The location policy is re-checked here too, so moving it shows its
             # effect on the board at once rather than only on the next run.
             in_area, mode, where = hard_filters.check_location(posting, settings.location)
