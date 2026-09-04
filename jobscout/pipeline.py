@@ -177,6 +177,13 @@ def _scan_one(settings: Settings, llm: LLM, company: Company,
         kept, trimmed = filters.narrow_to_relevant(
             in_area, profile, settings.max_postings_per_company)
         narrowed = (len(raw) - len(in_area)) + trimmed
+        for posting in kept:
+            # A role returned by the board's live API is, by definition, on the
+            # board right now. There is nothing for a verification fetch to add,
+            # so the budget is saved for postings an agent reported.
+            posting.verified = "live"
+            posting.verification_note = ("listed on %s's live board"
+                                         % (direct.ats or "the employer"))
         return kept, "%s API" % (direct.ats or "board"), narrowed
 
     # No API for this host (or the API failed): fall back to the agent.
@@ -285,17 +292,24 @@ def verify(settings: Settings, llm: LLM, postings: Sequence[Posting],
 
     Returns ``(verified, dropped, deferred, stats)``.
     """
-    targets = list(postings)[:settings.max_verify_per_run]
-    deferred = list(postings)[settings.max_verify_per_run:]
-    kept: List[Posting] = []
+    # Anything already known-live came straight from an employer's board API and
+    # needs no fetch; only agent-reported postings are spent budget on.
+    already_live = [p for p in postings if p.verified == "live"]
+    needs_check = [p for p in postings if p.verified != "live"]
+    targets = needs_check[:settings.max_verify_per_run]
+    deferred = needs_check[settings.max_verify_per_run:]
+    kept: List[Posting] = list(already_live)
     dropped: List[Posting] = []
-    stats: Dict[str, int] = {}
+    stats: Dict[str, int] = {"live_from_api": len(already_live)}
     if deferred:
         stats["deferred_budget"] = len(deferred)
     if not targets:
+        stats["verified"] = len(kept)
         return kept, dropped, deferred, stats
 
-    _log("verifying %d posting(s) by fetching each listing…" % len(targets))
+    _log("verifying %d agent-reported posting(s) by fetching each listing "
+         "(%d already confirmed live by a board API)…"
+         % (len(targets), len(already_live)))
     for posting, result, error in _parallel(
             targets, lambda p: agents.verify_posting(llm, p), settings.max_workers):
         if error is not None:

@@ -14,6 +14,7 @@ import pytest
 from jobscout import fetchers, pipeline
 from jobscout.config import LocationPolicy, Settings
 from jobscout.llm import LLM, MockBackend
+from jobscout.models import Posting
 
 TODAY = dt.date(2026, 9, 4)
 RECENT = (TODAY - dt.timedelta(days=3)).isoformat()
@@ -179,3 +180,36 @@ def test_the_profile_is_written_once_and_reused(settings):
     profile = json.loads(settings.profile_path.read_text())
     assert profile["seniority"] == "senior"
     assert profile["applied_companies"] == ["Some Lab"]
+
+
+def test_roles_from_a_board_api_are_not_re_verified(settings, monkeypatch):
+    """A role on the board's live API is on the board. Spending a fetch to
+    re-confirm that is pure waste, and the budget belongs to agent-reported
+    postings, which genuinely might not exist."""
+    from jobscout.fetchers import FetchResult
+
+    api_roles = [
+        Posting(company="Aurora Instruments", title="Senior Data Engineer",
+                location="Albuquerque, NM",
+                url="https://boards.greenhouse.io/aurora/jobs/1",
+                posted=RECENT, source="Greenhouse"),
+        Posting(company="Aurora Instruments", title="Staff Engineer",
+                location="Remote (must reside in California)",
+                url="https://boards.greenhouse.io/aurora/jobs/3",
+                posted=RECENT, source="Greenhouse"),
+    ]
+    monkeypatch.setattr(
+        fetchers, "fetch",
+        lambda company, url: FetchResult(postings=list(api_roles), ats="Greenhouse"))
+
+    result = pipeline.find(settings, today=TODAY)
+
+    assert [p.title for p in result.recommended] == ["Senior Data Engineer"]
+    assert result.stats["live_from_api"] == 1
+    # The California role never even reached the pipeline: the location gate ran
+    # at the source, for free, on the whole board.
+    assert result.stats["narrowed_at_source"] == 1
+
+    backend = LLM.from_settings(settings).backend
+    assert not any("Fetch this URL and tell me" in prompt
+                   for prompt in backend.prompts)
