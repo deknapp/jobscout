@@ -393,15 +393,31 @@ Be honest and discriminating. If a role is a weak fit, score it low and say why 
 the candidate is deciding where to spend real hours writing an application, and a
 list where everything is a 9 is useless to them.
 
-For each posting return:
-  fit_score   0-100. 80+ = apply now. 60-79 = worth a look. below 50 = probably skip.
-  rationale   two sentences, specific to THIS candidate's experience.
+Score TWO different things for each posting. They are not the same, and
+conflating them is the mistake that makes job tools useless:
+
+  fit_score   0-100: how well their background matches what the role ASKS FOR.
+  likelihood  0-100: their realistic chance of actually GETTING it. This is a
+              different question. Weigh how many people will apply, how senior
+              the role is relative to them, whether they meet hard gates
+              (citizenship, clearance, licence, degree), whether they are local
+              to a role that prefers local candidates, whether they have a warm
+              signal (a past application, a recruiter thread, an alumni or
+              former-employer connection visible in the profile), and how
+              specific the requirements are. A perfect-fit role at a famous
+              employer with 800 applicants can be a 90 fit and a 15 likelihood.
+              A merely-good role where they clear a gate most applicants do not
+              can be a 65 fit and a 70 likelihood. Be realistic, not kind.
+
+Also return:
+  rationale   two sentences on the FIT, specific to THIS candidate's experience.
+  odds        one sentence on the LIKELIHOOD — what helps or hurts their odds here.
   resembles   which of their past applications this most resembles, or "" if none.
   concerns    the strongest honest reason NOT to apply, or "" if there is none.
   angle       the one thing they should lead with in the application.
 
 Return ONLY a JSON array of objects with keys:
-  ["id", "fit_score", "rationale", "resembles", "concerns", "angle"]
+  ["id", "fit_score", "likelihood", "rationale", "odds", "resembles", "concerns", "angle"]
 
 They previously applied to: %s
 
@@ -425,13 +441,17 @@ POSTINGS
         posting_id = str(item.get("id") or "").strip()
         if not posting_id:
             continue
-        try:
-            score = int(float(item.get("fit_score") or 0))
-        except (TypeError, ValueError):
-            score = 0
+        def _score(key):
+            try:
+                return max(0, min(100, int(float(item.get(key) or 0))))
+            except (TypeError, ValueError):
+                return 0
+
         scores[posting_id] = {
-            "fit_score": max(0, min(100, score)),
+            "fit_score": _score("fit_score"),
+            "likelihood": _score("likelihood"),
             "rationale": str(item.get("rationale") or "").strip(),
+            "odds": str(item.get("odds") or "").strip(),
             "resembles": str(item.get("resembles") or "").strip(),
             "concerns": str(item.get("concerns") or "").strip(),
             "angle": str(item.get("angle") or "").strip(),

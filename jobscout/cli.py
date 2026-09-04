@@ -4,7 +4,8 @@
     jobscout status
     jobscout profile [--refresh]
     jobscout companies [--add NAME] [--ignore NAME] [--forget NAME]
-    jobscout find [--expand] [--max 10] [--dry-run]
+    jobscout find [--expand] [--max 10]
+    jobscout serve [--port 8765]
     jobscout history [--status recommended]
     jobscout mark <id> --applied | --dismissed [--note "..."]
 """
@@ -57,6 +58,15 @@ JOBSCOUT_MAX_SCANS_PER_RUN=12
 JOBSCOUT_MAX_VERIFY_PER_RUN=20
 JOBSCOUT_MAX_RESULTS=10
 JOBSCOUT_MAX_WORKERS=4
+
+# Ranking: how well you match, your realistic odds, and how fresh the posting is.
+JOBSCOUT_WEIGHT_FIT=0.45
+JOBSCOUT_WEIGHT_LIKELIHOOD=0.30
+JOBSCOUT_WEIGHT_RECENCY=0.25
+JOBSCOUT_RECENCY_HALFLIFE_DAYS=14
+
+# The local web app.
+JOBSCOUT_PORT=8765
 
 # Employers you never want to see, comma separated.
 JOBSCOUT_EXCLUDE_COMPANIES=
@@ -214,13 +224,23 @@ def cmd_find(args: argparse.Namespace) -> int:
     text = report.render(
         result.recommended, result.dropped, result.stats,
         usage=result.usage_summary, errors=result.errors,
-        deferred=result.deferred, location_summary=settings.location.summary())
+        deferred=result.deferred, location_summary=settings.location.summary(),
+        weights_summary=settings.weights().describe())
     print(text)
     if not args.no_save:
         path = report.write(text, settings.reports_dir)
         sys.stderr.write("\nreport saved to %s\n" % redact(path))
     sys.stderr.write("%s\n" % result.usage_summary)
     return 0
+
+
+# --- serve -----------------------------------------------------------------
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from .web import serve
+
+    settings = load_settings()
+    return serve(settings, port=args.port, open_browser=not args.no_browser)
 
 
 # --- history ---------------------------------------------------------------
@@ -301,6 +321,11 @@ def build_parser() -> argparse.ArgumentParser:
     find.add_argument("--max-age", type=int, metavar="DAYS", help="freshness limit for this run")
     find.add_argument("--no-save", action="store_true", help="do not write the report file")
     find.set_defaults(func=cmd_find)
+
+    serve = subparsers.add_parser("serve", help="open the local web app")
+    serve.add_argument("--port", type=int, help="port to listen on (default 8765)")
+    serve.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    serve.set_defaults(func=cmd_serve)
 
     history = subparsers.add_parser("history", help="what has already been recommended")
     history.add_argument("--status", choices=[RECOMMENDED, APPLIED, DISMISSED, "dropped"])

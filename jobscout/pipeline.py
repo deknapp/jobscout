@@ -23,7 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from . import agents, filters, sources
+from . import agents, filters, scoring, sources
+from .board import Board
 from .companies import Company, NO_BOARD, RESOLVED, Registry
 from .config import Settings
 from .corpus import Corpus, load_corpus
@@ -32,10 +33,23 @@ from .llm import LLM, LLMError
 from .models import Posting
 
 
-def _log(message: str) -> None:
+def _stderr_logger(message: str) -> None:
     """Progress goes to stderr so `jobscout find > report.md` stays clean."""
     sys.stderr.write(message + "\n")
     sys.stderr.flush()
+
+
+#: Swapped by the web app so a browser can watch a run happen.
+_logger: Callable[[str], None] = _stderr_logger
+
+
+def set_logger(logger: Optional[Callable[[str], None]]) -> None:
+    global _logger
+    _logger = logger or _stderr_logger
+
+
+def _log(message: str) -> None:
+    _logger(message)
 
 
 @dataclass
@@ -319,14 +333,19 @@ def find(settings: Settings, *, refresh_profile: bool = False,
         for posting in kept:
             score = scores.get(posting.id) or {}
             posting.fit_score = int(score.get("fit_score") or 0)
+            posting.likelihood = int(score.get("likelihood") or 0)
             posting.fit_rationale = score.get("rationale", "")
+            posting.likelihood_rationale = score.get("odds", "")
             posting.resembles = score.get("resembles", "")
             if score.get("concerns"):
                 posting.concerns = score["concerns"]
             if score.get("angle"):
                 posting.summary = (posting.summary + "\n\nLead with: " + score["angle"]).strip()
 
-    kept.sort(key=lambda p: (-p.fit_score, p.company.lower()))
+    # Blend fit, likelihood and recency, then percentile-rank the result against
+    # every role ever scored for this candidate.
+    kept = scoring.score_all(kept, settings.weights(),
+                             baseline=history.scored_composites(), today=today)
     result.recommended = kept[:settings.max_results]
     # Verified, in-location roles that simply did not fit in this report are held
     # over rather than recorded, so tomorrow's run can still surface them.
@@ -334,6 +353,12 @@ def find(settings: Settings, *, refresh_profile: bool = False,
     result.stats["recommended"] = len(result.recommended)
     result.stats["held_over"] = len(result.deferred)
     result.stats["employers_known"] = len(registry.companies)
+
+    # The board keeps the full detail of everything worth acting on, so the web
+    # app and later runs have something richer than the history's one-liners.
+    board = Board(settings.board_path)
+    board.merge(result.recommended + result.deferred, today=today)
+    board.save()
 
     # Only decided outcomes go in the history: what we recommended, and what we
     # ruled out (with the reason). Held-over roles are left undecided on purpose.

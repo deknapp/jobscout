@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from .models import Posting
+from .scoring import band
 
 MODE_LABEL = {
     "remote": "remote",
@@ -32,26 +33,34 @@ def _age_phrase(posting: Posting, today: dt.date) -> str:
     return "posted %d days ago" % age
 
 
-def _score_band(score: int) -> str:
-    if score >= 80:
-        return "strong match"
-    if score >= 65:
-        return "worth a look"
-    if score >= 50:
-        return "marginal"
-    return "weak"
+def _headline_score(posting: Posting) -> str:
+    """Percentile first when there is enough history for it to mean something."""
+    label = band(posting.percentile, posting.composite)
+    if posting.percentile is not None:
+        return "`%d%s percentile · %s`" % (posting.percentile,
+                                           _ordinal(posting.percentile), label)
+    return "`score %.0f/100 · %s`" % (posting.composite, label)
+
+
+def _ordinal(n: int) -> str:
+    if 10 <= n % 100 <= 20:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
 
 
 def render(recommended: Sequence[Posting], dropped: Sequence[Posting],
            stats: Dict[str, int], *, usage: str = "", errors: Sequence[str] = (),
            deferred: Sequence[Posting] = (), today: Optional[dt.date] = None,
-           location_summary: str = "") -> str:
+           location_summary: str = "", weights_summary: str = "") -> str:
     today = today or dt.date.today()
     out: List[str] = []
     out.append("# Job scout — %s" % today.isoformat())
     out.append("")
     if location_summary:
         out.append("Location filter: **%s**" % location_summary)
+        out.append("")
+    if weights_summary:
+        out.append("Ranked by: **%s**" % weights_summary)
         out.append("")
 
     if recommended:
@@ -70,10 +79,13 @@ def render(recommended: Sequence[Posting], dropped: Sequence[Posting],
         out.append("")
         out.append("## %d. %s — %s" % (index, posting.company, posting.title))
         out.append("")
-        out.append("`fit %d/100 · %s`" % (posting.fit_score, _score_band(posting.fit_score)))
+        out.append(_headline_score(posting))
         out.append("")
         out.append("| | |")
         out.append("|---|---|")
+        out.append("| **Scores** | fit %d · likelihood %d · recency %d → **%.0f** |"
+                   % (posting.fit_score, posting.likelihood, posting.recency_score,
+                      posting.composite))
         out.append("| **Location** | %s — %s |"
                    % (posting.location or "—", MODE_LABEL.get(posting.work_mode, posting.work_mode)))
         out.append("| **Posted** | %s%s |"
@@ -90,6 +102,9 @@ def render(recommended: Sequence[Posting], dropped: Sequence[Posting],
             out.append("")
         if posting.fit_rationale:
             out.append("**Why you:** %s" % posting.fit_rationale)
+            out.append("")
+        if posting.likelihood_rationale:
+            out.append("**Your odds:** %s" % posting.likelihood_rationale)
             out.append("")
         if posting.resembles:
             out.append("**Closest to:** %s" % posting.resembles)

@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jobscout</title>
+<style>
+  :root {
+    --bg: #0d1017;
+    --panel: #151a23;
+    --panel-2: #1b212c;
+    --line: #262e3b;
+    --text: #e6e9ef;
+    --muted: #8b95a7;
+    --dim: #5d6779;
+    --accent: #6ea8fe;
+    --good: #4ade80;
+    --warm: #fbbf24;
+    --bad: #f87171;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.55 ui-sans-serif, -apple-system, "SF Pro Text", "Segoe UI", Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  button {
+    font: inherit; color: inherit; cursor: pointer;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 6px 12px; transition: .12s;
+  }
+  button:hover { border-color: var(--dim); background: #232b38; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #08101f; font-weight: 600; }
+  button.primary:hover { background: #86b8ff; }
+  button:disabled { opacity: .45; cursor: default; }
+
+  header {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 14px 22px;
+    background: rgba(13,16,23,.86); backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { font-size: 17px; font-weight: 700; letter-spacing: -.2px; }
+  .brand span { color: var(--accent); }
+  .chip {
+    font-size: 12px; color: var(--muted);
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px 10px; white-space: nowrap;
+  }
+  .spacer { flex: 1; }
+
+  .layout { display: grid; grid-template-columns: 268px 1fr; gap: 22px; padding: 22px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+  aside { position: sticky; top: 76px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; }
+  .stat b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 11px; color: var(--muted); }
+
+  label.field { display: block; font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  label.field .val { float: right; color: var(--text); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; accent-color: var(--accent); margin-top: 4px; }
+  select, input[type=search] {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font: inherit;
+  }
+
+  .roles { display: grid; gap: 14px; }
+  .role {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px 18px;
+    display: grid; grid-template-columns: 74px 1fr; gap: 18px;
+  }
+  .role.done { opacity: .45; }
+  .rank { text-align: center; }
+  .pct { font-size: 26px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .pct sup { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .rank .band { font-size: 10px; color: var(--dim); line-height: 1.25; margin-top: 3px; }
+  .ring { margin: 9px auto 0; width: 54px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .ring i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); }
+
+  .role h3 { margin: 0 0 3px; font-size: 15.5px; font-weight: 650; letter-spacing: -.1px; }
+  .role h3 .co { color: var(--muted); font-weight: 500; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
+  .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+  .tag.remote { color: var(--good); border-color: #1f4030; background: #10201a; }
+  .tag.local { color: var(--accent); border-color: #1d3355; background: #101827; }
+  .tag.fresh { color: var(--warm); border-color: #47380f; background: #1f1a0c; }
+  .tag.status-applied { color: var(--good); }
+  .tag.status-dismissed { color: var(--bad); }
+
+  .bars { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin: 10px 0 12px; max-width: 430px; }
+  .bar span { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--dim); margin-bottom: 3px; }
+  .bar span b { color: var(--muted); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .bar i { display: block; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .bar i em { display: block; height: 100%; background: var(--accent); }
+  .bar.odds i em { background: var(--warm); }
+  .bar.fresh i em { background: var(--good); }
+
+  .note { font-size: 13px; color: #c3cad6; margin: 0 0 7px; }
+  .note b { color: var(--text); font-weight: 600; }
+  .note.warn b { color: var(--warm); }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+  .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .empty h3 { color: var(--text); margin: 0 0 8px; }
+
+  #log {
+    font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #0a0d13; border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; max-height: 220px; overflow: auto; white-space: pre-wrap;
+    color: var(--muted); margin-top: 12px;
+  }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; }
+  .dot.busy { background: var(--warm); animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">job<span>scout</span></div>
+  <div class="chip" id="chip-location">…</div>
+  <div class="chip" id="chip-backend">…</div>
+  <div class="spacer"></div>
+  <div class="chip" id="chip-run"><span class="dot"></span>idle</div>
+  <button id="btn-expand" title="Ask for more employers, then scan">Find more employers</button>
+  <button class="primary" id="btn-run">Run scout</button>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="card">
+      <h2>Your board</h2>
+      <div class="stat-grid" id="stats"></div>
+    </div>
+
+    <div class="card">
+      <h2>Ranking weights</h2>
+      <label class="field">Fit <span class="val" id="v-fit"></span>
+        <input type="range" id="w-fit" min="0" max="100" step="5"></label>
+      <label class="field">Likelihood <span class="val" id="v-lik"></span>
+        <input type="range" id="w-lik" min="0" max="100" step="5"></label>
+      <label class="field">Recency <span class="val" id="v-rec"></span>
+        <input type="range" id="w-rec" min="0" max="100" step="5"></label>
+      <label class="field">Recency half-life <span class="val" id="v-hl"></span>
+        <input type="range" id="w-hl" min="3" max="60" step="1"></label>
+      <div style="font-size:11.5px;color:var(--dim);margin-top:2px">
+        Re-ranks instantly — the scores are already stored, so moving these costs nothing.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Filter</h2>
+      <label class="field">Status
+        <select id="f-status">
+          <option value="open">Open (not yet acted on)</option>
+          <option value="all">Everything</option>
+          <option value="applied">Applied</option>
+          <option value="dismissed">Dismissed</option>
+        </select></label>
+      <label class="field">Work mode
+        <select id="f-mode">
+          <option value="">Any</option>
+          <option value="remote">Remote</option>
+          <option value="onsite">Onsite</option>
+          <option value="hybrid">Hybrid</option>
+        </select></label>
+      <label class="field">Search
+        <input type="search" id="f-text" placeholder="company or title"></label>
+    </div>
+
+    <div class="card">
+      <h2>Employers tracked</h2>
+      <div id="companies" style="font-size:12px;color:var(--muted);max-height:260px;overflow:auto"></div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="run-panel" class="card" hidden>
+      <h2>Run log</h2>
+      <div id="log"></div>
+    </div>
+    <div class="roles" id="roles"></div>
+  </main>
+</div>
+
+<script>
+"use strict";
+let STATE = null;
+let pollTimer = null;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function ordinal(n) {
+  if (n % 100 >= 10 && n % 100 <= 20) return "th";
+  return { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th";
+}
+
+async function api(path, method, body) {
+  const res = await fetch(path, {
+    method: method || "GET",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+}
+
+async function load() {
+  STATE = await api("/api/state");
+  render();
+}
+
+function render() {
+  const s = STATE;
+  $("chip-location").textContent = s.location.summary + " · ≤" + s.location.max_age_days + "d old";
+  $("chip-backend").textContent = "backend: " + s.backend;
+
+  $("stats").innerHTML = [
+    ["roles", "on the board"], ["applied", "applied"],
+    ["dismissed", "dismissed"], ["employers", "employers"],
+    ["boards_known", "boards found"], ["evaluated", "postings judged"],
+  ].map(([k, label]) =>
+    `<div class="stat"><b>${s.counts[k] ?? 0}</b><span>${label}</span></div>`).join("");
+
+  const w = s.weights, total = w.fit + w.likelihood + w.recency || 1;
+  setSlider("fit", Math.round(w.fit / total * 100));
+  setSlider("lik", Math.round(w.likelihood / total * 100));
+  setSlider("rec", Math.round(w.recency / total * 100));
+  $("w-hl").value = Math.round(w.halflife);
+  $("v-hl").textContent = Math.round(w.halflife) + " days";
+
+  $("companies").innerHTML = s.companies.length
+    ? s.companies.map((c) => {
+        const link = c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noreferrer">board</a>` : "—";
+        return `<div style="padding:4px 0;border-bottom:1px solid var(--line)">
+          <div style="color:var(--text)">${esc(c.name)}</div>
+          <div style="font-size:11px">${esc(c.status)} · ${link}${c.last_scanned ? " · scanned " + esc(c.last_scanned) : ""}</div>
+        </div>`; }).join("")
+    : "<i>none yet — hit Run scout</i>";
+
+  renderRoles();
+  renderRun(s.run);
+}
+
+function setSlider(key, value) {
+  $("w-" + key).value = value;
+  $("v-" + key).textContent = value + "%";
+}
+
+function renderRoles() {
+  const statusFilter = $("f-status").value;
+  const modeFilter = $("f-mode").value;
+  const text = $("f-text").value.trim().toLowerCase();
+
+  const roles = STATE.roles.filter((r) => {
+    if (statusFilter === "open" && r.status !== "recommended") return false;
+    if (statusFilter === "applied" && r.status !== "applied") return false;
+    if (statusFilter === "dismissed" && r.status !== "dismissed") return false;
+    if (modeFilter && r.work_mode !== modeFilter) return false;
+    if (text && !(r.company + " " + r.title).toLowerCase().includes(text)) return false;
+    return true;
+  });
+
+  if (!roles.length) {
+    $("roles").innerHTML = `<div class="empty"><h3>Nothing here yet</h3>
+      <p>${STATE.roles.length ? "No role matches this filter." :
+        "Hit <b>Run scout</b> — it will propose employers, find their job boards, read them, and rank what survives."}</p></div>`;
+    return;
+  }
+
+  $("roles").innerHTML = roles.map(roleCard).join("");
+  $("roles").querySelectorAll("button[data-act]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await api("/api/mark", "POST", { id: btn.dataset.id, status: btn.dataset.act });
+      await load();
+    });
+  });
+}
+
+function roleCard(r) {
+  const pct = r.percentile;
+  const headline = pct == null
+    ? `<div class="pct">${Math.round(r.composite)}</div><div class="band">score</div>`
+    : `<div class="pct">${pct}<sup>${ordinal(pct)}</sup></div><div class="band">${esc(r.band)}</div>`;
+
+  const age = r.age_days;
+  const ageText = age == null ? "no date" : age <= 0 ? "posted today"
+    : age === 1 ? "posted yesterday" : `posted ${age} days ago`;
+
+  const tags = [];
+  if (r.location) {
+    const cls = r.work_mode === "remote" ? "remote" : "local";
+    tags.push(`<span class="tag ${cls}">${esc(r.location)}</span>`);
+  }
+  tags.push(`<span class="tag${age != null && age <= 7 ? " fresh" : ""}">${ageText}</span>`);
+  if (r.source) tags.push(`<span class="tag">${esc(r.source)}</span>`);
+  if (r.salary) tags.push(`<span class="tag">${esc(r.salary)}</span>`);
+  if (r.status !== "recommended") tags.push(`<span class="tag status-${esc(r.status)}">${esc(r.status)}</span>`);
+
+  const bar = (cls, label, value) => `<div class="bar ${cls}">
+      <span>${label}<b>${value}</b></span><i><em style="width:${Math.max(2, value)}%"></em></i></div>`;
+
+  return `<article class="role${r.status === "recommended" ? "" : " done"}">
+    <div class="rank">${headline}
+      <div class="ring"><i style="width:${Math.max(3, Math.round(r.composite))}%"></i></div>
+    </div>
+    <div>
+      <h3>${esc(r.title)} <span class="co">· ${esc(r.company)}</span></h3>
+      <div class="meta">${tags.join("")}</div>
+      <div class="bars">
+        ${bar("", "fit", r.fit_score)}
+        ${bar("odds", "likelihood", r.likelihood)}
+        ${bar("fresh", "recency", r.recency_score)}
+      </div>
+      ${r.fit_rationale ? `<p class="note"><b>Why you:</b> ${esc(r.fit_rationale)}</p>` : ""}
+      ${r.likelihood_rationale ? `<p class="note"><b>Your odds:</b> ${esc(r.likelihood_rationale)}</p>` : ""}
+      ${r.resembles ? `<p class="note"><b>Closest to:</b> ${esc(r.resembles)}</p>` : ""}
+      ${r.concerns ? `<p class="note warn"><b>Worth weighing:</b> ${esc(r.concerns)}</p>` : ""}
+      <div class="actions">
+        <a href="${esc(r.url)}" target="_blank" rel="noreferrer"><button class="primary">Open posting ↗</button></a>
+        <button data-act="applied" data-id="${esc(r.id)}">Mark applied</button>
+        <button data-act="dismissed" data-id="${esc(r.id)}">Dismiss</button>
+      </div>
+    </div>
+  </article>`;
+}
+
+function renderRun(run) {
+  const chip = $("chip-run");
+  chip.innerHTML = run.running
+    ? '<span class="dot busy"></span>running…'
+    : `<span class="dot"></span>${run.finished_at ? "finished " + run.finished_at : "idle"}`;
+  $("btn-run").disabled = run.running;
+  $("btn-expand").disabled = run.running;
+
+  const panel = $("run-panel");
+  if (run.log.length) {
+    panel.hidden = false;
+    const log = $("log");
+    log.textContent = run.log.join("\n") + (run.error ? "\n" + run.error : "");
+    log.scrollTop = log.scrollHeight;
+  } else {
+    panel.hidden = true;
+  }
+
+  if (run.running && !pollTimer) {
+    pollTimer = setInterval(async () => {
+      const state = await api("/api/run");
+      renderRun(state);
+      if (!state.running) { clearInterval(pollTimer); pollTimer = null; await load(); }
+    }, 1500);
+  }
+}
+
+async function pushWeights() {
+  const fit = +$("w-fit").value, lik = +$("w-lik").value;
+  const rec = +$("w-rec").value, hl = +$("w-hl").value;
+  $("v-fit").textContent = fit + "%";
+  $("v-lik").textContent = lik + "%";
+  $("v-rec").textContent = rec + "%";
+  $("v-hl").textContent = hl + " days";
+  await api("/api/weights", "POST", { fit, likelihood: lik, recency: rec, halflife: hl });
+  await load();
+}
+
+["w-fit", "w-lik", "w-rec", "w-hl"].forEach((id) => $(id).addEventListener("change", pushWeights));
+["f-status", "f-mode"].forEach((id) => $(id).addEventListener("change", renderRoles));
+$("f-text").addEventListener("input", renderRoles);
+$("btn-run").addEventListener("click", async () => { await api("/api/run", "POST", {}); await load(); });
+$("btn-expand").addEventListener("click", async () => { await api("/api/run", "POST", { expand: true }); await load(); });
+
+load();
+</script>
+</body>
+</html>

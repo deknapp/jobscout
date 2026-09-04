@@ -67,8 +67,18 @@ class Posting:
     work_mode: str = ""
     verified: str = "unchecked"   # live | dead | mismatch | unchecked
     verification_note: str = ""
+    #: How well your background matches the role, 0-100.
     fit_score: int = 0
+    #: Your realistic chance of actually getting it, 0-100 — a different question.
+    likelihood: int = 0
+    #: Freshness, 0-100, decaying exponentially with the posting's age.
+    recency_score: int = 0
+    #: The weighted blend of the three, and where it sits against everything
+    #: jobscout has ever scored for you.
+    composite: float = 0.0
+    percentile: Optional[int] = None
     fit_rationale: str = ""
+    likelihood_rationale: str = ""
     resembles: str = ""           # which of your past applications it looks like
     concerns: str = ""
     #: Why a dropped posting was dropped (reporting only).
@@ -109,5 +119,14 @@ class Posting:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Posting":
-        fields = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
-        return cls(**{k: ("" if v is None else v) for k, v in data.items() if k in fields})
+        spec = cls.__dataclass_fields__  # type: ignore[attr-defined]
+        kwargs = {}
+        for key, value in data.items():
+            if key not in spec:
+                continue
+            # Only string fields get the None -> "" treatment; percentile is
+            # legitimately None when there is not enough history to rank against.
+            if value is None and spec[key].default == "":
+                value = ""
+            kwargs[key] = value
+        return cls(**kwargs)

@@ -67,8 +67,8 @@ def test_the_source_tree_hardcodes_nobody():
     for path in _tracked_files():
         if path.suffix.lower() not in TRACKED_TEXT_SUFFIXES or not path.exists():
             continue
-        if path.name == Path(__file__).name:
-            continue  # this file names the needles on purpose
+        if path.name in (Path(__file__).name, "install-hooks.sh"):
+            continue  # these two name the needles on purpose
         text = path.read_text(encoding="utf-8", errors="replace")
         for needle in suspicious:
             if needle in text:

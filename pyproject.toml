@@ -24,5 +24,8 @@ jobscout = "jobscout.cli:main"
 [tool.setuptools.packages.find]
 include = ["jobscout*"]
 
+[tool.setuptools.package-data]
+jobscout = ["static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

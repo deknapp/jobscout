@@ -52,7 +52,9 @@ jobscout is built the other way round:
 6. **Verify every survivor.** Each remaining posting's page is fetched and
    checked: is this role real, is it open, and does the page's own location text
    still pass the filter?
-7. **Score what's left** against your actual background, with the reasons stated.
+7. **Score what's left** on three separate axes — fit, likelihood and recency —
+   and report the blend as a percentile against everything it has ever scored
+   for you.
 
 ## The hard location filter
 
@@ -118,23 +120,142 @@ become part of it:
 Nothing about any particular person is baked into the code. The same clone works
 for anyone.
 
+## Ranking: fit, likelihood, recency
+
+Most job tools give you one number. That number quietly conflates two different
+questions, and the answers often point opposite ways:
+
+* **fit** — how well your background matches what the role asks for
+* **likelihood** — your realistic chance of actually *getting* it, weighing how
+  many people will apply, whether you clear hard gates (citizenship, clearance,
+  licence, degree), whether you are local to a role that prefers local
+  candidates, and whether you have a warm signal already
+* **recency** — a job posted three days ago is meaningfully more gettable than
+  the same job posted three weeks ago
+
+A perfect-fit staff role at a famous employer with 800 applicants can be a 95
+fit and a 12 likelihood. A merely-good role where you clear a gate most
+applicants do not can be a 72 fit and a 78 likelihood — and it is the better
+use of your afternoon. jobscout scores both, and asks the model to be realistic
+rather than kind.
+
+Recency decays **exponentially** (half-life 14 days by default) rather than
+linearly, because that is how a requisition actually ages: fast at first, then
+it barely matters whether it has been open 40 days or 60.
+
+The blend is then reported as a **percentile** against every role jobscout has
+ever scored for you, because "88th percentile" answers the question you are
+actually asking — *is this better than what usually crosses my desk?* — which a
+bare score out of 100 does not. Weights are configurable, and the web app turns
+them into sliders.
+
+## The web app
+
+```bash
+jobscout serve
+```
+
+Opens `http://127.0.0.1:8765` — a local board you work through, rather than a
+wall of terminal text you re-read:
+
+* roles ranked by percentile, each with its fit / likelihood / recency breakdown
+* **weight sliders that re-rank the whole board instantly**, with no model calls:
+  the component scores are already stored, so this costs nothing
+* filter by status, work mode or text; mark a role **applied** or **dismissed**
+  and it writes straight to the history, so the next run stops offering it
+* start a run from the page and watch the log as it happens
+* the employer registry, with a link to each board jobscout found
+
+It is built on the Python standard library — no framework, no CDN, no external
+requests of any kind — because the page is looking at your job search and that
+should not leave your machine. Everything it displays comes from your data dir.
+
 ## Install
 
 ```bash
 git clone https://github.com/deknapp/jobscout.git
 cd jobscout
-python3 -m venv .venv && ./.venv/bin/pip install -e .
+python3 -m venv .venv
+./.venv/bin/pip install -e .
 ```
 
-You need the [Claude Code CLI](https://claude.com/claude-code) installed and
-logged in. jobscout shells out to `claude -p` in headless mode, so calls are
-billed to the account you already have, and the hosted `WebSearch` / `WebFetch`
-tools come with it — which is what makes live discovery possible at all. Each
-agent runs in an empty temp directory with only those two tools allowed.
+Python 3.9 or newer. The only hard dependencies are `pypdf` and `python-docx`,
+for reading your application materials.
 
-Prefer an API key? `JOBSCOUT_BACKEND=anthropic` with `ANTHROPIC_API_KEY` set,
-plus `pip install -e '.[api]'`. `JOBSCOUT_BACKEND=mock` runs the whole pipeline
-offline for free, which is how the test suite works.
+## Connecting Claude
+
+jobscout needs a model that can search and fetch the web. There are two ways to
+give it one, plus an offline mode for trying it out.
+
+### Option 1 — your Claude Code login (recommended, no API key)
+
+```bash
+JOBSCOUT_BACKEND=cli          # this is the default
+```
+
+jobscout shells out to `claude -p` in headless mode, so calls are billed to the
+Claude account you are already logged into, and the hosted `WebSearch` and
+`WebFetch` tools come with it — which is what makes live job discovery possible
+at all.
+
+```bash
+npm install -g @anthropic-ai/claude-code   # or see claude.com/claude-code
+claude                                     # run once, log in, then quit
+claude --version                           # confirm it is on your PATH
+```
+
+That is the whole setup. Each agent runs in an empty temporary directory with
+**only** `WebSearch` and `WebFetch` allowed — it cannot read your files, your
+repo or your home directory. Headless mode denies any tool not on that list.
+
+### Option 2 — an Anthropic API key
+
+If you would rather bill an API account, or the CLI is not available on the
+machine:
+
+```bash
+./.venv/bin/pip install -e '.[api]'
+```
+
+Get a key from [console.anthropic.com](https://console.anthropic.com/settings/keys)
+(**Settings → API keys → Create key**), then put it in your git-ignored `.env`
+alongside the rest of your configuration:
+
+```ini
+JOBSCOUT_BACKEND=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+The key is read from the environment only, is never written anywhere by
+jobscout, and `.env` is git-ignored (and blocked by the pre-commit hook).
+
+Web search on this path uses Anthropic's server-side `web_search` tool, which is
+billed per search on top of tokens. `WebFetch` is not available through the API
+in the same form, so verification is weaker here than on the CLI path — the CLI
+backend is genuinely the better one, not just the cheaper one.
+
+### Which model
+
+Two tiers, both configurable:
+
+```ini
+JOBSCOUT_MODEL_CHEAP=claude-haiku-4-5    # board scans, verification, board lookup
+JOBSCOUT_MODEL_STRONG=claude-opus-5      # profile, employer proposals, ranking
+```
+
+The cheap tier does the high-volume mechanical work (read this board, fetch this
+page). The strong tier does the three judgement calls: who you are, who would
+want you, and how good each role really is.
+
+### Option 3 — offline
+
+```bash
+JOBSCOUT_BACKEND=mock
+```
+
+Runs the entire pipeline against canned responses, at zero cost and with no
+network. This is how the test suite works, and it is a good way to see the shape
+of the thing before spending anything.
 
 ## Use
 
@@ -151,6 +272,8 @@ jobscout find              # the actual run: prints a report, saves a copy
 jobscout companies                    # the employer registry it has built up
 jobscout companies --add "Some Lab"   # add one it missed
 jobscout companies --ignore "Acme"    # never suggest this employer again
+
+jobscout serve             # the local web app: the board, sliders, run button
 
 jobscout history                      # what it has already shown you
 jobscout mark a1b2c3d4e5f6 --applied  # so it stops offering that one
@@ -172,6 +295,15 @@ run and a thorough one:
 | `JOBSCOUT_COMPANY_TARGET` | 30 | one strong call when the registry is short |
 | `JOBSCOUT_RESCAN_AFTER_DAYS` | 3 | how often a known board is re-read |
 
+Ranking weights are free to change — they operate on scores already stored:
+
+| Setting | Default |
+|---|---:|
+| `JOBSCOUT_WEIGHT_FIT` | 0.45 |
+| `JOBSCOUT_WEIGHT_LIKELIHOOD` | 0.30 |
+| `JOBSCOUT_WEIGHT_RECENCY` | 0.25 |
+| `JOBSCOUT_RECENCY_HALFLIFE_DAYS` | 14 |
+
 Runs get cheaper over time: board resolution happens once per employer, and the
 history stops the pipeline from re-verifying anything it has already ruled out.
 
@@ -186,6 +318,9 @@ history stops the pipeline from re-verifying anything it has already ruled out.
 | `filters.py` | the hard location / freshness / verification gates |
 | `companies.py` | the employer registry that accumulates across runs |
 | `history.py` | the append-only log that prevents repeats |
+| `scoring.py` | fit / likelihood / recency blend, and percentile ranking |
+| `board.py` | the persistent working list the web app reads |
+| `web.py` + `static/` | the local web app (standard library only) |
 | `pipeline.py` | wires the stages together, with per-run budgets |
 | `report.py` | the Markdown report, including what got filtered out and why |
 | `llm.py` | claude-CLI / Anthropic-API / mock backends |
@@ -197,10 +332,12 @@ history stops the pipeline from re-verifying anything it has already ruled out.
 ./.venv/bin/python -m pytest
 ```
 
-They run entirely offline against the mock backend — including a full pipeline
-run over a realistic mix of postings (one good local role, one genuinely remote
+74 tests, all offline against the mock backend. They include a full pipeline run
+over a realistic mix of postings — one good local role, one genuinely remote
 role, one "remote" role fenced to another state, one from an aggregator, one
-that is a year old) asserting that exactly the right two survive.
+that is a year old — asserting that exactly the right two survive; the location
+table above, case by case; and the ranking, including that a high-fit lottery
+ticket loses to a realistic bet.
 
 ## Licence
 

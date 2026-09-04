@@ -56,6 +56,16 @@ def _env_int(name: str, default: int) -> int:
         raise ConfigError("%s must be an integer, got %r" % (name, raw)) from exc
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = _env(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ConfigError("%s must be a number, got %r" % (name, raw)) from exc
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = _env(name).lower()
     if not raw:
@@ -147,6 +157,13 @@ class Settings:
     #: Seconds before a single agent call is abandoned.
     timeout_seconds: int = 600
     location: LocationPolicy = field(default_factory=LocationPolicy)
+    #: How the three scores are blended, and how fast recency decays.
+    weight_fit: float = 0.45
+    weight_likelihood: float = 0.30
+    weight_recency: float = 0.25
+    recency_halflife_days: float = 14.0
+    #: Port for `jobscout serve`.
+    port: int = 8765
     #: Titles/domains to steer the search; inferred from your materials if empty.
     target_titles: List[str] = field(default_factory=list)
     exclude_companies: List[str] = field(default_factory=list)
@@ -171,6 +188,17 @@ class Settings:
     @property
     def companies_path(self) -> Path:
         return self.data_dir / "companies.json"
+
+    @property
+    def board_path(self) -> Path:
+        return self.data_dir / "board.json"
+
+    def weights(self):
+        from .scoring import Weights
+
+        return Weights(fit=self.weight_fit, likelihood=self.weight_likelihood,
+                       recency=self.weight_recency,
+                       halflife_days=self.recency_halflife_days)
 
     def ensure_data_dir(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -270,6 +298,11 @@ def load_settings(require_applications: bool = True) -> Settings:
         max_scans_per_run=_env_int("JOBSCOUT_MAX_SCANS_PER_RUN", 12),
         max_verify_per_run=_env_int("JOBSCOUT_MAX_VERIFY_PER_RUN", 20),
         rescan_after_days=_env_int("JOBSCOUT_RESCAN_AFTER_DAYS", 3),
+        weight_fit=_env_float("JOBSCOUT_WEIGHT_FIT", 0.45),
+        weight_likelihood=_env_float("JOBSCOUT_WEIGHT_LIKELIHOOD", 0.30),
+        weight_recency=_env_float("JOBSCOUT_WEIGHT_RECENCY", 0.25),
+        recency_halflife_days=_env_float("JOBSCOUT_RECENCY_HALFLIFE_DAYS", 14.0),
+        port=_env_int("JOBSCOUT_PORT", 8765),
         max_workers=_env_int("JOBSCOUT_MAX_WORKERS", 4),
         timeout_seconds=_env_int("JOBSCOUT_TIMEOUT_SECONDS", 600),
         location=load_location_policy(data_dir),

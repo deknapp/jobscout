@@ -49,6 +49,10 @@ class Entry:
     posted: str = ""
     status: str = RECOMMENDED
     reason: str = ""
+    #: Kept so later runs can percentile-rank against everything ever scored.
+    fit_score: int = 0
+    likelihood: int = 0
+    composite: float = 0.0
     permanent: bool = True
     first_seen: str = ""
     last_seen: str = ""
@@ -175,6 +179,9 @@ class History:
             posted=posting.posted,
             status=status,
             reason=reason,
+            fit_score=posting.fit_score,
+            likelihood=posting.likelihood,
+            composite=posting.composite,
             permanent=(status != DROPPED) or is_permanent(reason),
             first_seen=(existing.first_seen if existing else stamp) or stamp,
             last_seen=stamp,
@@ -205,3 +212,12 @@ class History:
 
     def by_status(self, status: str) -> List[Entry]:
         return [e for e in self.entries if e.status == status]
+
+    def scored_composites(self) -> List[float]:
+        """Every composite score ever assigned — the percentile baseline.
+
+        Only scored entries count. Postings dropped by a hard filter never
+        reached the ranking agent, and folding their zeroes in would inflate
+        every percentile.
+        """
+        return [e.composite for e in self.entries if e.composite > 0]
