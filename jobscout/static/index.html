@@ -117,7 +117,7 @@
   #log {
     font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
     background: #0a0d13; border: 1px solid var(--line); border-radius: 10px;
-    padding: 12px 14px; max-height: 220px; overflow: auto; white-space: pre-wrap;
+    padding: 12px 14px; max-height: 340px; overflow: auto; white-space: pre-wrap;
     color: var(--muted); margin-top: 12px;
   }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; }
@@ -187,7 +187,7 @@
 
   <main>
     <div id="run-panel" class="card" hidden>
-      <h2>Run log</h2>
+      <h2>Run log <span id="log-count" style="float:right;color:var(--dim);font-weight:400"></span></h2>
       <div id="log"></div>
     </div>
     <div class="roles" id="roles"></div>
@@ -198,6 +198,7 @@
 "use strict";
 let STATE = null;
 let pollTimer = null;
+let runStartedAt = null;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g,
@@ -340,9 +341,16 @@ function roleCard(r) {
 
 function renderRun(run) {
   const chip = $("chip-run");
-  chip.innerHTML = run.running
-    ? '<span class="dot busy"></span>running…'
-    : `<span class="dot"></span>${run.finished_at ? "finished " + run.finished_at : "idle"}`;
+  if (run.running) {
+    if (!runStartedAt) runStartedAt = Date.now();
+    const secs = Math.round((Date.now() - runStartedAt) / 1000);
+    const mins = Math.floor(secs / 60);
+    const elapsed = mins ? `${mins}m ${secs % 60}s` : `${secs}s`;
+    chip.innerHTML = `<span class="dot busy"></span>running · ${elapsed}`;
+  } else {
+    runStartedAt = null;
+    chip.innerHTML = `<span class="dot"></span>${run.finished_at ? "finished " + run.finished_at : "idle"}`;
+  }
   $("btn-run").disabled = run.running;
   $("btn-expand").disabled = run.running;
 
@@ -350,8 +358,11 @@ function renderRun(run) {
   if (run.log.length) {
     panel.hidden = false;
     const log = $("log");
+    const wasAtBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
     log.textContent = run.log.join("\n") + (run.error ? "\n" + run.error : "");
-    log.scrollTop = log.scrollHeight;
+    $("log-count").textContent = run.log.length + " lines";
+    // Only auto-scroll if the reader had not scrolled up to look at something.
+    if (wasAtBottom) log.scrollTop = log.scrollHeight;
   } else {
     panel.hidden = true;
   }
@@ -361,7 +372,7 @@ function renderRun(run) {
       const state = await api("/api/run");
       renderRun(state);
       if (!state.running) { clearInterval(pollTimer); pollTimer = null; await load(); }
-    }, 1500);
+    }, 1000);
   }
 }
 

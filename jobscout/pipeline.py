@@ -18,6 +18,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 import sys
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,20 +68,110 @@ class RunResult:
     errors: List[str] = field(default_factory=list)
 
 
+#: How often to say "still working" while slow tasks are in flight. Long agent
+#: scans can run for minutes, and silence is indistinguishable from a hang.
+HEARTBEAT_SECONDS = 20
+
+
+class _Progress:
+    """Live, ordered progress for work happening on several threads at once."""
+
+    def __init__(self, stage: str, total: int) -> None:
+        self.stage = stage
+        self.total = total
+        self.done = 0
+        self.started_at = time.time()
+        self.in_flight: Dict[str, float] = {}
+        self.lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def _counter(self) -> str:
+        return "[%*d/%d]" % (len(str(self.total)), self.done, self.total)
+
+    def start(self, name: str) -> None:
+        # No counter on a start line: the count means "finished", and showing it
+        # beside a job that is only beginning reads as though it were done.
+        with self.lock:
+            self.in_flight[name] = time.time()
+            _log("      → %s %s…" % (self.stage, name))
+
+    def finish(self, name: str, detail: str) -> None:
+        with self.lock:
+            began = self.in_flight.pop(name, time.time())
+            self.done += 1
+            _log("  %s %-34s %s (%.1fs)"
+                 % (self._counter(), name[:34], detail, time.time() - began))
+
+    def _beat(self) -> None:
+        while not self._stop.wait(HEARTBEAT_SECONDS):
+            with self.lock:
+                if not self.in_flight:
+                    continue
+                waiting = sorted(self.in_flight.items(), key=lambda kv: kv[1])
+                names = ", ".join("%s (%.0fs)" % (n, time.time() - t)
+                                  for n, t in waiting[:3])
+                more = "" if len(waiting) <= 3 else " +%d more" % (len(waiting) - 3)
+                _log("      … still working: %s%s" % (names, more))
+
+    def __enter__(self) -> "_Progress":
+        self._thread = threading.Thread(target=self._beat, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+        _log("  %s %s finished in %.0fs"
+             % (self._counter(), self.stage, time.time() - self.started_at))
+
+
 def _parallel(items: Sequence[Any], worker: Callable[[Any], Any],
-              max_workers: int) -> List[Tuple[Any, Any, Optional[Exception]]]:
-    """Run ``worker`` over ``items``; never let one failure kill the run."""
+              max_workers: int, stage: str = "",
+              label: Optional[Callable[[Any], str]] = None,
+              detail: Optional[Callable[[Any], str]] = None
+              ) -> List[Tuple[Any, Any, Optional[Exception]]]:
+    """Run ``worker`` over ``items``; never let one failure kill the run.
+
+    When ``stage`` is given, each item is announced as it starts and again as it
+    finishes, with a heartbeat naming whatever is still in flight — so a long
+    agent scan reads as slow rather than as a hang.
+    """
     results: List[Tuple[Any, Any, Optional[Exception]]] = []
     if not items:
         return results
-    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
-        futures = {pool.submit(worker, item): item for item in items}
-        for future in as_completed(futures):
-            item = futures[future]
-            try:
-                results.append((item, future.result(), None))
-            except Exception as exc:  # one bad board should not sink the run
-                results.append((item, None, exc))
+
+    name_of = label or (lambda item: str(item))
+
+    if not stage:
+        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+            futures = {pool.submit(worker, item): item for item in items}
+            for future in as_completed(futures):
+                item = futures[future]
+                try:
+                    results.append((item, future.result(), None))
+                except Exception as exc:
+                    results.append((item, None, exc))
+        return results
+
+    with _Progress(stage, len(items)) as progress:
+        def run(item: Any) -> Any:
+            progress.start(name_of(item))
+            return worker(item)
+
+        with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+            futures = {pool.submit(run, item): item for item in items}
+            for future in as_completed(futures):
+                item = futures[future]
+                try:
+                    outcome = future.result()
+                    results.append((item, outcome, None))
+                    note = detail(outcome) if detail else "done"
+                except Exception as exc:  # one bad board should not sink the run
+                    results.append((item, None, exc))
+                    note = "failed: %s" % str(exc)[:80]
+                progress.finish(name_of(item), note)
     return results
 
 
@@ -134,7 +226,10 @@ def resolve_boards(settings: Settings, llm: LLM, registry: Registry) -> int:
     _log("finding careers boards for %d employer(s)…" % len(pending))
     resolved = 0
     for company, result, error in _parallel(
-            pending, lambda c: agents.resolve_board(llm, c), settings.max_workers):
+            pending, lambda c: agents.resolve_board(llm, c), settings.max_workers,
+            stage="looking up", label=lambda c: c.name,
+            detail=lambda r: (("found %s" % (r or {}).get("careers_url", ""))[:70]
+                              if (r or {}).get("careers_url") else "no board found")):
         if error is not None:
             company.note = "board lookup failed: %s" % str(error)[:120]
             continue
@@ -212,7 +307,8 @@ def scan_boards(settings: Settings, llm: LLM, registry: Registry,
     via_api = 0
     for company, outcome, error in _parallel(
             targets, lambda c: _scan_one(settings, llm, c, profile),
-            settings.max_workers):
+            settings.max_workers, stage="reading", label=lambda c: c.name,
+            detail=lambda o: "%d role(s) via %s" % (len(o[0]), o[1])):
         if error is not None:
             errors.append("%s: %s" % (company.name, str(error)[:160]))
             continue
@@ -221,7 +317,6 @@ def scan_boards(settings: Settings, llm: LLM, registry: Registry,
         if how.endswith("API"):
             via_api += 1
         registry.mark_scanned(company, len(found))
-        _log("  %-34s %2d role(s) via %s" % (company.name[:34], len(found), how))
         postings.extend(found)
     registry.save()
     stats["boards_read"] = len(targets)
@@ -314,7 +409,9 @@ def verify(settings: Settings, llm: LLM, postings: Sequence[Posting],
          "(%d already confirmed live by a board API)…"
          % (len(targets), len(already_live)))
     for posting, result, error in _parallel(
-            targets, lambda p: agents.verify_posting(llm, p), settings.max_workers):
+            targets, lambda p: agents.verify_posting(llm, p), settings.max_workers,
+            stage="checking", label=lambda p: "%s — %s" % (p.company, p.title[:40]),
+            detail=lambda r: (r or {}).get("status", "unknown")):
         if error is not None:
             posting.verified = "unchecked"
             posting.verification_note = str(error)[:200]
