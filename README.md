@@ -45,8 +45,10 @@ jobscout is built the other way round:
 3. **Find each employer's real board, once.** Greenhouse, Lever, Ashby, Workday,
    SmartRecruiters, iCIMS, or a `.gov`/`.edu` careers page. That URL is cached
    forever, so the expensive step happens one time per employer.
-4. **Read those boards directly.** A posting on the employer's own ATS is the
-   employer's own listing: they pay for the board, and a filled role comes off it.
+4. **Read those boards directly — usually without a model at all.** Greenhouse,
+   Lever, Ashby, SmartRecruiters and Workable all publish their listings as free
+   public JSON, so jobscout asks the API. See below: this is the difference
+   between the tool working and not.
 5. **Filter in Python, not in the prompt.** Location, freshness, source and
    duplicates are decided by code the model cannot talk its way past.
 6. **Verify every survivor.** Each remaining posting's page is fetched and
@@ -55,6 +57,41 @@ jobscout is built the other way round:
 7. **Score what's left** on three separate axes — fit, likelihood and recency —
    and report the blend as a percentile against everything it has ever scored
    for you.
+
+## Reading boards without a model
+
+The first live run read ten job boards and found **one** posting, for four
+dollars. The cause was structural, not a prompt problem: Greenhouse, Lever,
+Ashby, Workday and iCIMS boards are JavaScript applications. Fetching one
+returns an empty shell, so the agent looked at the shell and — correctly, and
+without inventing anything — reported an empty board.
+
+But every one of those systems publishes the same listings as free, public JSON:
+
+```
+Greenhouse       boards-api.greenhouse.io/v1/boards/<slug>/jobs?content=true
+Lever            api.lever.co/v0/postings/<slug>?mode=json
+Ashby            api.ashbyhq.com/posting-api/job-board/<slug>
+SmartRecruiters  api.smartrecruiters.com/v1/companies/<slug>/postings
+Workable         apply.workable.com/api/v1/widget/accounts/<slug>
+```
+
+So jobscout asks the API instead. This is better in every direction that
+matters. It is free and instant. It returns the **complete** board rather than
+whatever survived one page fetch. The dates and location strings are the
+employer's own fields rather than a model's reading of them. And a hallucinated
+job stops being unlikely and becomes *impossible*, because nothing is generated.
+
+The agent-driven scan is still there, for in-house and government boards with no
+API. It is the fallback now, not the default — and board resolution actively
+hunts for the ATS **behind** a marketing careers page rather than settling for
+the page.
+
+An API hands back the whole board, so two free filters run right at the source,
+before anything costs money: the hard location gate, and — only when a board
+still has more than 25 in-area roles — a crude title-overlap trim. Below that
+cap nothing is trimmed, because an unusual title is exactly what token overlap
+throws away by mistake.
 
 ## The hard location filter
 
@@ -290,7 +327,7 @@ run and a thorough one:
 | Setting | Default | What it costs |
 |---|---:|---|
 | `JOBSCOUT_MAX_RESOLVE_PER_RUN` | 10 | one cheap web-search call per new employer, once ever |
-| `JOBSCOUT_MAX_SCANS_PER_RUN` | 12 | one cheap call per board read |
+| `JOBSCOUT_MAX_SCANS_PER_RUN` | 12 | **free** for an ATS board; one cheap call only for boards with no API |
 | `JOBSCOUT_MAX_VERIFY_PER_RUN` | 20 | one cheap fetch per surviving posting |
 | `JOBSCOUT_COMPANY_TARGET` | 30 | one strong call when the registry is short |
 | `JOBSCOUT_RESCAN_AFTER_DAYS` | 3 | how often a known board is re-read |
@@ -315,6 +352,7 @@ history stops the pipeline from re-verifying anything it has already ruled out.
 | `corpus.py` | reads your applications folder (PDF, DOCX, text) |
 | `agents.py` | the six prompts: profile, propose, resolve, scan, verify, rank |
 | `sources.py` | which hosts count as a real posting |
+| `fetchers.py` | reads Greenhouse/Lever/Ashby/SmartRecruiters/Workable boards from their JSON APIs |
 | `filters.py` | the hard location / freshness / verification gates |
 | `companies.py` | the employer registry that accumulates across runs |
 | `history.py` | the append-only log that prevents repeats |
@@ -332,7 +370,8 @@ history stops the pipeline from re-verifying anything it has already ruled out.
 ./.venv/bin/python -m pytest
 ```
 
-74 tests, all offline against the mock backend. They include a full pipeline run
+86 tests, all offline against the mock backend — the fetcher tests parse
+recorded API shapes and the pipeline test stubs the network out entirely. They include a full pipeline run
 over a realistic mix of postings — one good local role, one genuinely remote
 role, one "remote" role fenced to another state, one from an aggregator, one
 that is a year old — asserting that exactly the right two survive; the location
