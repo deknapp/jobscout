@@ -161,6 +161,9 @@ class Settings:
     #: Seconds before a single agent call is abandoned.
     timeout_seconds: int = 600
     location: LocationPolicy = field(default_factory=LocationPolicy)
+    #: Salary, employment type, clearance and title filters — each with its own
+    #: policy for postings that simply do not say.
+    requirements: "Requirements" = field(default_factory=lambda: _requirements())
     #: How the three scores are blended, and how fast recency decays.
     weight_fit: float = 0.45
     weight_likelihood: float = 0.30
@@ -197,6 +200,10 @@ class Settings:
     def board_path(self) -> Path:
         return self.data_dir / "board.json"
 
+    @property
+    def requirements_path(self) -> Path:
+        return self.data_dir / "requirements.json"
+
     def weights(self):
         from .scoring import Weights
 
@@ -225,6 +232,71 @@ def _assert_outside_repo(path: Path, label: str) -> None:
         "That folder holds personal material and this repo is public — put it "
         "somewhere else, e.g. under your home directory." % (label, resolved)
     )
+
+
+def _requirements():
+    from .requirements import Requirements
+
+    return Requirements()
+
+
+def _env_optional_int(name: str) -> Optional[int]:
+    raw = _env(name)
+    if not raw or raw.lower() in ("none", "any", "-"):
+        return None
+    try:
+        return int(float(raw.lower().replace("k", "000").replace("$", "").replace(",", "")))
+    except ValueError as exc:
+        raise ConfigError("%s must be a number, got %r" % (name, raw)) from exc
+
+
+def load_requirements(data_dir: Path):
+    """Requirements from ``<data_dir>/requirements.json``, overridden by env vars."""
+    from .requirements import EXCLUDE, INCLUDE, Requirements
+
+    requirements = Requirements()
+    path = data_dir / "requirements.json"
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            raw = {}
+        fields = set(Requirements.__dataclass_fields__)  # type: ignore[attr-defined]
+        requirements = Requirements(**{k: v for k, v in raw.items() if k in fields})
+
+    if _env("JOBSCOUT_SALARY_MIN"):
+        requirements.salary_min = _env_optional_int("JOBSCOUT_SALARY_MIN")
+    if _env("JOBSCOUT_SALARY_MAX"):
+        requirements.salary_max = _env_optional_int("JOBSCOUT_SALARY_MAX")
+    for env_name, attr in (
+            ("JOBSCOUT_UNKNOWN_SALARY", "unknown_salary"),
+            ("JOBSCOUT_UNKNOWN_EMPLOYMENT", "unknown_employment"),
+            ("JOBSCOUT_UNKNOWN_CLEARANCE", "unknown_clearance"),
+            ("JOBSCOUT_UNKNOWN_LOCATION", "unknown_location"),
+            ("JOBSCOUT_UNKNOWN_DATE", "unknown_date")):
+        if _env(env_name):
+            value = _env(env_name).lower()
+            if value not in (INCLUDE, EXCLUDE):
+                raise ConfigError("%s must be 'include' or 'exclude', got %r"
+                                  % (env_name, value))
+            setattr(requirements, attr, value)
+    if _env("JOBSCOUT_EMPLOYMENT_TYPES"):
+        requirements.employment_types = _env_list("JOBSCOUT_EMPLOYMENT_TYPES")
+    if _env("JOBSCOUT_EXCLUDE_CLEARANCE_ROLES"):
+        requirements.exclude_clearance_required = _env_bool(
+            "JOBSCOUT_EXCLUDE_CLEARANCE_ROLES", False)
+    if _env("JOBSCOUT_EXCLUDE_TITLE_WORDS"):
+        requirements.exclude_title_words = _env_list("JOBSCOUT_EXCLUDE_TITLE_WORDS")
+    if _env("JOBSCOUT_REQUIRE_TITLE_WORDS"):
+        requirements.require_title_words = _env_list("JOBSCOUT_REQUIRE_TITLE_WORDS")
+    return requirements.normalized()
+
+
+def save_requirements(data_dir: Path, requirements) -> Path:
+    path = data_dir / "requirements.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(requirements.to_dict(), indent=2) + "\n", encoding="utf-8")
+    return path
 
 
 def load_location_policy(data_dir: Path) -> LocationPolicy:
@@ -311,6 +383,7 @@ def load_settings(require_applications: bool = True) -> Settings:
         max_workers=_env_int("JOBSCOUT_MAX_WORKERS", 4),
         timeout_seconds=_env_int("JOBSCOUT_TIMEOUT_SECONDS", 600),
         location=load_location_policy(data_dir),
+        requirements=load_requirements(data_dir),
         target_titles=_env_list("JOBSCOUT_TARGET_TITLES"),
         exclude_companies=_env_list("JOBSCOUT_EXCLUDE_COMPANIES"),
     )

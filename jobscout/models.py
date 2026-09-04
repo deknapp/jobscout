@@ -63,6 +63,13 @@ class Posting:
     posted: str = ""
     salary: str = ""
     summary: str = ""
+    #: How far through the pipeline this posting has got. The web app shows
+    #: roles the moment they are FOUND, then fills in the rest as it arrives,
+    #: so a long run is readable from the first employer rather than the last.
+    #:   found -> passed the free filters, not yet checked or scored
+    #:   verified -> confirmed to be a real, open listing
+    #:   scored -> ranked against your background
+    stage: str = "found"
     #: Filled in by later stages.
     work_mode: str = ""
     verified: str = "unchecked"   # live | dead | mismatch | unchecked

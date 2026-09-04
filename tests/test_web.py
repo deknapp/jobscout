@@ -98,3 +98,36 @@ def test_the_page_is_self_contained(app):
     assert "<title>jobscout</title>" in html
     for remote in ("http://", "https://cdn", "src=\"//"):
         assert remote not in html.replace('target="_blank"', "")
+
+
+def test_requirements_are_re_checked_on_every_read(app):
+    """Moving a filter must show its effect at once, not on the next run."""
+    application, _ = app
+
+    payload = application.board_payload()
+    assert all(r["requirement_ok"] for r in payload["roles"])
+
+    # A floor above everything on the board, but keep postings that say nothing.
+    application.set_requirements({"salary_min": 500000, "unknown_salary": "include"})
+    payload = application.board_payload()
+    assert all(r["requirement_ok"] for r in payload["roles"]), \
+        "postings with no stated salary must survive an include policy"
+
+    # Same floor, now dropping unknowns: everything goes, and says why.
+    application.set_requirements({"unknown_salary": "exclude"})
+    payload = application.board_payload()
+    assert not any(r["requirement_ok"] for r in payload["roles"])
+    assert all("drop unknowns" in r["requirement_reason"] for r in payload["roles"])
+
+
+def test_requirements_survive_a_restart(app, tmp_path):
+    application, _ = app
+    application.set_requirements({"salary_min": 150000, "unknown_salary": "exclude",
+                                 "exclude_title_words": "sales, intern"})
+
+    from jobscout.config import load_requirements
+
+    reloaded = load_requirements(application.settings.data_dir)
+    assert reloaded.salary_min == 150000
+    assert reloaded.unknown_salary == "exclude"
+    assert reloaded.exclude_title_words == ["sales", "intern"]

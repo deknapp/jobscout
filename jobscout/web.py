@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 from . import pipeline, scoring
 from .board import Board
 from .companies import Registry
-from .config import Settings, save_location_policy
+from .config import Settings, load_requirements, save_location_policy, save_requirements
 from .history import APPLIED, DISMISSED, History, RECOMMENDED
 from .models import Posting
 
@@ -85,6 +85,12 @@ class App:
             record["band"] = scoring.band(posting.percentile, posting.composite)
             stored = board.items.get(posting.id, {})
             record["first_seen"] = stored.get("first_seen", "")
+            record["stage"] = stored.get("stage", posting.stage)
+            # Re-check the current requirements on every read, so moving a
+            # filter shows its effect at once instead of only on the next run.
+            ok, why = settings.requirements.check(posting)
+            record["requirement_ok"] = ok
+            record["requirement_reason"] = why
             roles.append(record)
 
         profile: Dict[str, Any] = {}
@@ -100,6 +106,8 @@ class App:
             "weights": {"fit": weights.fit, "likelihood": weights.likelihood,
                         "recency": weights.recency,
                         "halflife": weights.halflife_days},
+            "requirements": dict(settings.requirements.to_dict(),
+                                 summary=settings.requirements.summary()),
             "location": {"summary": settings.location.summary(),
                          "states": settings.location.allowed_states,
                          "cities": settings.location.allowed_cities,
@@ -139,10 +147,17 @@ class App:
             self.state.summary = ""
             self.state.finished_at = None
 
+        def publish(postings) -> None:
+            """Write roles to the board the moment the pipeline finds them."""
+            board = Board(self.settings.board_path)
+            board.merge(postings)
+            board.save()
+
         def work() -> None:
             pipeline.set_logger(self.state.append)
             try:
-                result = pipeline.find(self.settings, expand=expand)
+                result = pipeline.find(self.settings, expand=expand,
+                                       on_update=publish)
                 self.state.summary = ("%d new role(s) · %s"
                                       % (len(result.recommended), result.usage_summary))
                 self.state.append("done — " + self.state.summary)
@@ -164,6 +179,35 @@ class App:
         history = History(self.settings.history_path)
         entry = history.mark(posting_id, status)
         return {"ok": entry is not None}
+
+    def set_requirements(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        from .requirements import EXCLUDE, INCLUDE, Requirements
+
+        current = self.settings.requirements
+        fields = set(Requirements.__dataclass_fields__)  # type: ignore[attr-defined]
+        for key, value in data.items():
+            if key not in fields:
+                continue
+            if key in ("salary_min", "salary_max"):
+                try:
+                    value = int(value) if str(value).strip() not in ("", "None") else None
+                except (TypeError, ValueError):
+                    continue
+            elif key.startswith("unknown_"):
+                if str(value).lower() not in (INCLUDE, EXCLUDE):
+                    continue
+            elif key.endswith("_types") or key.endswith("_words"):
+                if isinstance(value, str):
+                    value = [v.strip() for v in value.split(",") if v.strip()]
+                elif not isinstance(value, list):
+                    continue
+            elif key == "exclude_clearance_required":
+                value = bool(value)
+            setattr(current, key, value)
+        self.settings.requirements = current.normalized()
+        self.settings.ensure_data_dir()
+        save_requirements(self.settings.data_dir, self.settings.requirements)
+        return {"ok": True, "summary": self.settings.requirements.summary()}
 
     def set_weights(self, data: Dict[str, Any]) -> Dict[str, Any]:
         settings = self.settings
@@ -250,6 +294,8 @@ def make_handler(app: App):
                                     str(data.get("status") or "")))
             elif path == "/api/weights":
                 self._json(app.set_weights(data))
+            elif path == "/api/requirements":
+                self._json(app.set_requirements(data))
             else:
                 self._json({"error": "not found"}, 404)
 

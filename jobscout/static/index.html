@@ -111,6 +111,22 @@
   .note.warn b { color: var(--warm); }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px; margin-top: 5px; }
+  .checks label, label.field.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  label.field.inline { margin-bottom: 10px; }
+  input[type=checkbox] { accent-color: var(--accent); margin: 0; }
+  .unknowns { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 11px; }
+  .unknowns h3 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--warm); }
+  .unknowns p { margin: 0 0 10px; font-size: 11.5px; color: var(--dim); line-height: 1.45; }
+  label.field.unk { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  label.field.unk select { width: auto; padding: 3px 7px; font-size: 12px; }
+  .role.excluded { opacity: .5; border-style: dashed; }
+  .role.pending { border-color: #33405a; }
+  .pct.pending { color: var(--dim); letter-spacing: 2px; font-size: 20px; }
+  .pending-note { color: var(--dim); font-style: italic; margin: 10px 0 4px; }
+  .tag.excluded { color: var(--bad); border-color: #4a2020; background: #200f0f; }
+
   .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
   .empty h3 { color: var(--text); margin: 0 0 8px; }
 
@@ -160,6 +176,47 @@
     </div>
 
     <div class="card">
+      <h2>Requirements</h2>
+      <div class="two">
+        <label class="field">Salary min
+          <input type="text" id="r-salmin" placeholder="any" inputmode="numeric"></label>
+        <label class="field">Salary max
+          <input type="text" id="r-salmax" placeholder="any" inputmode="numeric"></label>
+      </div>
+      <label class="field">Employment type
+        <div class="checks" id="r-employment">
+          <label><input type="checkbox" value="full-time"> full-time</label>
+          <label><input type="checkbox" value="part-time"> part-time</label>
+          <label><input type="checkbox" value="contract"> contract</label>
+          <label><input type="checkbox" value="internship"> internship</label>
+        </div></label>
+      <label class="field inline">
+        <input type="checkbox" id="r-clearance"> Exclude roles needing an active clearance</label>
+      <label class="field">Title must NOT contain
+        <input type="text" id="r-extitle" placeholder="sales, intern"></label>
+      <label class="field">Title must contain one of
+        <input type="text" id="r-reqtitle" placeholder="engineer, scientist"></label>
+
+      <div class="unknowns">
+        <h3>When a posting doesn't say</h3>
+        <p>A filter that quietly drops these is why good jobs vanish. Your call,
+           one at a time.</p>
+        <label class="field unk">no salary stated
+          <select id="u-salary"><option value="include">keep</option><option value="exclude">drop</option></select></label>
+        <label class="field unk">no employment type
+          <select id="u-employment"><option value="include">keep</option><option value="exclude">drop</option></select></label>
+        <label class="field unk">no clearance statement
+          <select id="u-clearance"><option value="include">keep</option><option value="exclude">drop</option></select></label>
+        <label class="field unk">no location stated
+          <select id="u-location"><option value="include">keep</option><option value="exclude">drop</option></select></label>
+        <label class="field unk">no posting date
+          <select id="u-date"><option value="include">keep</option><option value="exclude">drop</option></select></label>
+      </div>
+      <button id="r-save" class="primary" style="width:100%;margin-top:10px">Apply requirements</button>
+      <div id="r-summary" style="font-size:11.5px;color:var(--dim);margin-top:8px"></div>
+    </div>
+
+    <div class="card">
       <h2>Filter</h2>
       <label class="field">Status
         <select id="f-status">
@@ -177,6 +234,8 @@
         </select></label>
       <label class="field">Search
         <input type="search" id="f-text" placeholder="company or title"></label>
+      <label class="field inline">
+        <input type="checkbox" id="f-showfiltered"> Show roles your requirements exclude</label>
     </div>
 
     <div class="card">
@@ -251,8 +310,52 @@ function render() {
         </div>`; }).join("")
     : "<i>none yet — hit Run scout</i>";
 
+  renderRequirements(s.requirements);
   renderRoles();
   renderRun(s.run);
+}
+
+function renderRequirements(r) {
+  $("r-salmin").value = r.salary_min == null ? "" : r.salary_min;
+  $("r-salmax").value = r.salary_max == null ? "" : r.salary_max;
+  $("r-clearance").checked = !!r.exclude_clearance_required;
+  $("r-extitle").value = (r.exclude_title_words || []).join(", ");
+  $("r-reqtitle").value = (r.require_title_words || []).join(", ");
+  $("r-employment").querySelectorAll("input").forEach((box) => {
+    box.checked = (r.employment_types || []).includes(box.value);
+  });
+  $("u-salary").value = r.unknown_salary;
+  $("u-employment").value = r.unknown_employment;
+  $("u-clearance").value = r.unknown_clearance;
+  $("u-location").value = r.unknown_location;
+  $("u-date").value = r.unknown_date;
+  $("r-summary").textContent = r.summary;
+}
+
+function money(id) {
+  const raw = $(id).value.trim().toLowerCase().replace(/[$,]/g, "").replace("k", "000");
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+async function saveRequirements() {
+  const types = [...$("r-employment").querySelectorAll("input")]
+    .filter((b) => b.checked).map((b) => b.value);
+  await api("/api/requirements", "POST", {
+    salary_min: money("r-salmin"),
+    salary_max: money("r-salmax"),
+    employment_types: types,
+    exclude_clearance_required: $("r-clearance").checked,
+    exclude_title_words: $("r-extitle").value,
+    require_title_words: $("r-reqtitle").value,
+    unknown_salary: $("u-salary").value,
+    unknown_employment: $("u-employment").value,
+    unknown_clearance: $("u-clearance").value,
+    unknown_location: $("u-location").value,
+    unknown_date: $("u-date").value,
+  });
+  await load();
 }
 
 function setSlider(key, value) {
@@ -265,7 +368,9 @@ function renderRoles() {
   const modeFilter = $("f-mode").value;
   const text = $("f-text").value.trim().toLowerCase();
 
+  const showFiltered = $("f-showfiltered").checked;
   const roles = STATE.roles.filter((r) => {
+    if (!showFiltered && r.requirement_ok === false) return false;
     if (statusFilter === "open" && r.status !== "recommended") return false;
     if (statusFilter === "applied" && r.status !== "applied") return false;
     if (statusFilter === "dismissed" && r.status !== "dismissed") return false;
@@ -273,6 +378,10 @@ function renderRoles() {
     if (text && !(r.company + " " + r.title).toLowerCase().includes(text)) return false;
     return true;
   });
+  // While a run is going, put the just-arrived roles where they will be seen.
+  if (STATE.run && STATE.run.running) {
+    roles.sort((a, b) => (a.stage === "scored") - (b.stage === "scored"));
+  }
 
   if (!roles.length) {
     $("roles").innerHTML = `<div class="empty"><h3>Nothing here yet</h3>
@@ -293,9 +402,13 @@ function renderRoles() {
 
 function roleCard(r) {
   const pct = r.percentile;
-  const headline = pct == null
-    ? `<div class="pct">${Math.round(r.composite)}</div><div class="band">score</div>`
-    : `<div class="pct">${pct}<sup>${ordinal(pct)}</sup></div><div class="band">${esc(r.band)}</div>`;
+  // A role appears the moment it is found; the scores fill in as they arrive.
+  const scored = r.stage === "scored";
+  const headline = !scored
+    ? `<div class="pct pending">•••</div><div class="band">${r.stage === "verified" ? "checked, scoring…" : "just found"}</div>`
+    : pct == null
+      ? `<div class="pct">${Math.round(r.composite)}</div><div class="band">score</div>`
+      : `<div class="pct">${pct}<sup>${ordinal(pct)}</sup></div><div class="band">${esc(r.band)}</div>`;
 
   const age = r.age_days;
   const ageText = age == null ? "no date" : age <= 0 ? "posted today"
@@ -310,22 +423,26 @@ function roleCard(r) {
   if (r.source) tags.push(`<span class="tag">${esc(r.source)}</span>`);
   if (r.salary) tags.push(`<span class="tag">${esc(r.salary)}</span>`);
   if (r.status !== "recommended") tags.push(`<span class="tag status-${esc(r.status)}">${esc(r.status)}</span>`);
+  if (r.requirement_ok === false) tags.push(`<span class="tag excluded">${esc(r.requirement_reason || "excluded by your requirements")}</span>`);
 
   const bar = (cls, label, value) => `<div class="bar ${cls}">
       <span>${label}<b>${value}</b></span><i><em style="width:${Math.max(2, value)}%"></em></i></div>`;
 
-  return `<article class="role${r.status === "recommended" ? "" : " done"}">
+  const classes = (r.status === "recommended" ? "" : " done") +
+                  (r.requirement_ok === false ? " excluded" : "") +
+                  (scored ? "" : " pending");
+  return `<article class="role${classes}">
     <div class="rank">${headline}
       <div class="ring"><i style="width:${Math.max(3, Math.round(r.composite))}%"></i></div>
     </div>
     <div>
       <h3>${esc(r.title)} <span class="co">· ${esc(r.company)}</span></h3>
       <div class="meta">${tags.join("")}</div>
-      <div class="bars">
+      ${scored ? `<div class="bars">
         ${bar("", "fit", r.fit_score)}
         ${bar("odds", "likelihood", r.likelihood)}
         ${bar("fresh", "recency", r.recency_score)}
-      </div>
+      </div>` : `<p class="note pending-note">Found on the employer's board. Scoring once this run finishes reading the rest.</p>`}
       ${r.fit_rationale ? `<p class="note"><b>Why you:</b> ${esc(r.fit_rationale)}</p>` : ""}
       ${r.likelihood_rationale ? `<p class="note"><b>Your odds:</b> ${esc(r.likelihood_rationale)}</p>` : ""}
       ${r.resembles ? `<p class="note"><b>Closest to:</b> ${esc(r.resembles)}</p>` : ""}
@@ -388,7 +505,8 @@ async function pushWeights() {
 }
 
 ["w-fit", "w-lik", "w-rec", "w-hl"].forEach((id) => $(id).addEventListener("change", pushWeights));
-["f-status", "f-mode"].forEach((id) => $(id).addEventListener("change", renderRoles));
+["f-status", "f-mode", "f-showfiltered"].forEach((id) => $(id).addEventListener("change", renderRoles));
+$("r-save").addEventListener("click", saveRequirements);
 $("f-text").addEventListener("input", renderRoles);
 $("btn-run").addEventListener("click", async () => { await api("/api/run", "POST", {}); await load(); });
 $("btn-expand").addEventListener("click", async () => { await api("/api/run", "POST", { expand: true }); await load(); });

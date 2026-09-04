@@ -16,6 +16,10 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 from .models import Posting
 
+#: Ordered by how much is known. A later merge must never move a role backwards
+#: — a streamed "found" arriving after a "scored" would erase its ranking.
+STAGE_ORDER = {"found": 0, "verified": 1, "scored": 2}
+
 
 class Board:
     def __init__(self, path: Path) -> None:
@@ -56,6 +60,11 @@ class Board:
                 added += 1
             else:
                 record["first_seen"] = existing.get("first_seen", stamp)
+                was = STAGE_ORDER.get(existing.get("stage", "found"), 0)
+                now = STAGE_ORDER.get(record.get("stage", "found"), 0)
+                if now < was:
+                    record = dict(existing, **{
+                        k: v for k, v in record.items() if v not in ("", 0, None)})
             record["last_scored"] = stamp
             self.items[posting.id] = record
         return added

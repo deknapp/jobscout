@@ -215,3 +215,28 @@ def test_roles_from_a_board_api_are_not_re_verified(settings, monkeypatch):
     backend = LLM.from_settings(settings).backend
     assert not any("Fetch this URL and tell me" in prompt
                    for prompt in backend.prompts)
+
+
+def test_roles_are_published_as_each_employer_is_read(settings, monkeypatch):
+    """A dashboard should fill in during a run, not stay blank until the end."""
+    from jobscout.fetchers import FetchResult
+
+    monkeypatch.setattr(
+        fetchers, "fetch",
+        lambda company, url, context=None: FetchResult(
+            postings=[Posting(company="Aurora Instruments", title="Senior Data Engineer",
+                              location="Albuquerque, NM",
+                              url="https://boards.greenhouse.io/aurora/jobs/1",
+                              posted=RECENT, source="Greenhouse")],
+            ats="Greenhouse"))
+
+    updates = []
+    pipeline.find(settings, today=TODAY,
+                  on_update=lambda postings: updates.append(
+                      [(p.title, p.stage) for p in postings]))
+
+    stages = [stage for batch in updates for _title, stage in batch]
+    # Found first — before verification or scoring could possibly have run.
+    assert stages[0] == "found"
+    assert "scored" in stages
+    assert stages.index("found") < stages.index("scored")

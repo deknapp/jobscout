@@ -108,6 +108,37 @@ still has more than 25 in-area roles — a crude title-overlap trim. Below that
 cap nothing is trimmed, because an unusual title is exactly what token overlap
 throws away by mistake.
 
+## Filters that know the difference between "no" and "didn't say"
+
+Most job filters have two outcomes and quietly fold the third into the wrong
+one. Ask for a $150k floor and every posting that simply does not print a
+salary — which is most of them — disappears. You are never told, and you
+conclude the market is empty.
+
+So every filter here is **tri-state**: pass, fail, and *didn't say* — and each
+one carries its own policy for the third, because the right answer differs:
+
+```bash
+jobscout filters --salary-min 150k --unknown-salary include                  --employment full-time --unknown-employment include                  --exclude-clearance --unknown-clearance include                  --exclude-title "sales,intern,recruiter"                  --unknown-location exclude
+```
+
+| Filter | What "didn't say" defaults to | Why |
+|---|---|---|
+| salary min/max | **include** | plenty of good employers do not publish a range |
+| employment type | **include** | most postings never say "full-time" outright |
+| active clearance | **include** | silence usually means it is not required |
+| location | **exclude** | if you cannot relocate, an unknown location is a real risk |
+| posting date | **exclude** | an undated posting is often an old one |
+
+Every default is overridable in either direction, per filter, from the CLI or
+the web app — and the report always says which filter dropped what, so "nothing
+came back" can be traced to a setting rather than blamed on the market.
+
+Salary parsing handles `$150,000-$180,000`, `$150K-$180K`, `USD 210,000` and
+`$95/hour` (annualised so it can be compared), and knows that **401k matching is
+not a $401,000 salary**. The top of a stated range is what clears your floor: a
+$140–165k role passes a $150k minimum, because it can pay it.
+
 ## The hard location filter
 
 This is the part most job tools get wrong, so it is the part with the most tests.
@@ -217,7 +248,12 @@ jobscout serve
 Opens `http://127.0.0.1:8765` — a local board you work through, rather than a
 wall of terminal text you re-read:
 
+* **roles appear as they are found**, not after the last employer is read — a
+  run publishes each board's survivors immediately, and the cards fill in from
+  "just found" to "checked" to fully scored as the pipeline catches up
 * roles ranked by percentile, each with its fit / likelihood / recency breakdown
+* every filter as a control, including what each one does with "didn't say" —
+  move one and the board re-filters instantly, with no model calls
 * **weight sliders that re-rank the whole board instantly**, with no model calls:
   the component scores are already stored, so this costs nothing
 * filter by status, work mode or text; mark a role **applied** or **dismissed**
@@ -325,6 +361,7 @@ jobscout init --applications "~/path/to/your applications" \
               --cities "Albuquerque,Santa Fe,Los Alamos,Rio Rancho,Las Cruces"
 
 jobscout status            # what it can read, and what the filters are set to
+jobscout filters           # show every filter, and what each does with "didn't say"
 jobscout profile           # the profile it inferred from your materials
 jobscout find              # the actual run: prints a report, saves a copy
 
@@ -376,6 +413,7 @@ history stops the pipeline from re-verifying anything it has already ruled out.
 | `sources.py` | which hosts count as a real posting |
 | `fetchers.py` | reads Greenhouse/Lever/Ashby/SmartRecruiters/Workable/Workday boards from their JSON APIs, and iCIMS from its server-rendered HTML |
 | `filters.py` | the hard location / freshness / verification gates |
+| `requirements.py` | salary, employment type, clearance and title filters, each tri-state |
 | `companies.py` | the employer registry that accumulates across runs |
 | `history.py` | the append-only log that prevents repeats |
 | `scoring.py` | fit / likelihood / recency blend, and percentile ranking |

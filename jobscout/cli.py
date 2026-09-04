@@ -236,12 +236,90 @@ def cmd_find(args: argparse.Namespace) -> int:
         result.recommended, result.dropped, result.stats,
         usage=result.usage_summary, errors=result.errors,
         deferred=result.deferred, location_summary=settings.location.summary(),
-        weights_summary=settings.weights().describe())
+        weights_summary=settings.weights().describe(),
+        requirements_summary=settings.requirements.summary())
     print(text)
     if not args.no_save:
         path = report.write(text, settings.reports_dir)
         sys.stderr.write("\nreport saved to %s\n" % redact(path))
     sys.stderr.write("%s\n" % result.usage_summary)
+    return 0
+
+
+# --- filters ---------------------------------------------------------------
+
+def cmd_filters(args: argparse.Namespace) -> int:
+    from .config import save_requirements
+    from .requirements import EXCLUDE, INCLUDE
+
+    settings = load_settings(require_applications=False)
+    settings.ensure_data_dir()
+    requirements = settings.requirements
+
+    if args.clear:
+        from .requirements import Requirements
+
+        requirements = Requirements()
+
+    changed = args.clear
+    def money(value):
+        if value is None:
+            return None
+        text = str(value).strip().lower().replace("$", "").replace(",", "")
+        if text in ("none", "any", "-", ""):
+            return None
+        return int(float(text.replace("k", "000")))
+
+    for flag, attr, convert in (
+            ("salary_min", "salary_min", money),
+            ("salary_max", "salary_max", money),
+            ("unknown_salary", "unknown_salary", str),
+            ("unknown_employment", "unknown_employment", str),
+            ("unknown_clearance", "unknown_clearance", str),
+            ("unknown_location", "unknown_location", str),
+            ("unknown_date", "unknown_date", str)):
+        value = getattr(args, flag)
+        if value is not None:
+            setattr(requirements, attr, convert(value))
+            changed = True
+    if args.employment is not None:
+        requirements.employment_types = [t.strip() for t in args.employment.split(",") if t.strip()]
+        changed = True
+    if args.exclude_clearance is not None:
+        requirements.exclude_clearance_required = args.exclude_clearance
+        changed = True
+    if args.exclude_title is not None:
+        requirements.exclude_title_words = [w.strip() for w in args.exclude_title.split(",") if w.strip()]
+        changed = True
+    if args.require_title is not None:
+        requirements.require_title_words = [w.strip() for w in args.require_title.split(",") if w.strip()]
+        changed = True
+
+    requirements = requirements.normalized()
+    if changed:
+        path = save_requirements(settings.data_dir, requirements)
+        print("saved %s" % redact(path))
+        print()
+
+    print("Location (hard):   %s" % settings.location.summary())
+    print("Freshness:         at most %d days old" % settings.max_age_days)
+    print()
+    print("Salary:            %s to %s" % (
+        "$%s" % f"{requirements.salary_min:,}" if requirements.salary_min else "any",
+        "$%s" % f"{requirements.salary_max:,}" if requirements.salary_max else "any"))
+    print("Employment type:   %s" % (", ".join(requirements.employment_types) or "any"))
+    print("Clearance roles:   %s" % ("excluded" if requirements.exclude_clearance_required
+                                     else "allowed"))
+    print("Title excludes:    %s" % (", ".join(requirements.exclude_title_words) or "—"))
+    print("Title must match:  %s" % (", ".join(requirements.require_title_words) or "—"))
+    print()
+    print("When a posting DOESN'T SAY — a filter that silently drops these is")
+    print("the reason good jobs vanish, so each one is your call:")
+    print("  no salary stated        %s" % requirements.unknown_salary)
+    print("  no employment type      %s" % requirements.unknown_employment)
+    print("  no clearance statement  %s" % requirements.unknown_clearance)
+    print("  no location stated      %s" % requirements.unknown_location)
+    print("  no posting date         %s" % requirements.unknown_date)
     return 0
 
 
@@ -339,6 +417,32 @@ def build_parser() -> argparse.ArgumentParser:
     find.add_argument("--max-age", type=int, metavar="DAYS", help="freshness limit for this run")
     find.add_argument("--no-save", action="store_true", help="do not write the report file")
     find.set_defaults(func=cmd_find)
+
+    unknown_help = "what to do when a posting does not say (include | exclude)"
+    filters = subparsers.add_parser(
+        "filters", help="show or set the salary / employment / clearance filters",
+        description="Every filter has three outcomes — pass, fail, and DIDN'T SAY. "
+                    "You choose what happens to the third, per filter.")
+    filters.add_argument("--salary-min", help="e.g. 150000 or 150k")
+    filters.add_argument("--salary-max", help="e.g. 250000; use 'any' to clear")
+    filters.add_argument("--unknown-salary", choices=["include", "exclude"], help=unknown_help)
+    filters.add_argument("--employment", metavar="TYPES",
+                         help="comma separated: full-time,part-time,contract,internship")
+    filters.add_argument("--unknown-employment", choices=["include", "exclude"], help=unknown_help)
+    filters.add_argument("--exclude-clearance", dest="exclude_clearance",
+                         action="store_true", default=None,
+                         help="drop roles that require an ACTIVE security clearance")
+    filters.add_argument("--allow-clearance", dest="exclude_clearance",
+                         action="store_false", help="allow active-clearance roles")
+    filters.add_argument("--unknown-clearance", choices=["include", "exclude"], help=unknown_help)
+    filters.add_argument("--exclude-title", metavar="WORDS",
+                         help="comma-separated words that disqualify a title, e.g. sales,intern")
+    filters.add_argument("--require-title", metavar="WORDS",
+                         help="comma-separated words a title must contain at least one of")
+    filters.add_argument("--unknown-location", choices=["include", "exclude"], help=unknown_help)
+    filters.add_argument("--unknown-date", choices=["include", "exclude"], help=unknown_help)
+    filters.add_argument("--clear", action="store_true", help="reset every filter to its default")
+    filters.set_defaults(func=cmd_filters)
 
     serve = subparsers.add_parser("serve", help="open the local web app")
     serve.add_argument("--port", type=int, help="port to listen on (default 8765)")

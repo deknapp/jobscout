@@ -207,10 +207,17 @@ def check_verified(posting: Posting) -> Tuple[bool, str]:
     return False, "not verified"
 
 
-def dedupe(postings: Sequence[Posting]) -> List[Posting]:
-    """Collapse the same role found by several searches."""
-    seen_ids = set()
-    seen_pairs = set()
+def dedupe(postings: Sequence[Posting],
+           seen_ids: Optional[set] = None,
+           seen_pairs: Optional[set] = None) -> List[Posting]:
+    """Collapse the same role found by several searches.
+
+    Pass the two sets in to dedupe ACROSS calls — the pipeline filters one
+    employer at a time so results can stream out, and a role must not reappear
+    just because the batch boundary moved.
+    """
+    seen_ids = seen_ids if seen_ids is not None else set()
+    seen_pairs = seen_pairs if seen_pairs is not None else set()
     kept: List[Posting] = []
     for posting in postings:
         pair = (posting.company_key, posting.title_key)

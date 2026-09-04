@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from . import agents, fetchers, filters, scoring, sources
+from . import agents, fetchers, filters, requirements, scoring, sources
 from .board import Board
 from .companies import Company, NO_BOARD, RESOLVED, Registry
 from .config import Settings
@@ -269,8 +269,13 @@ def _scan_one(settings: Settings, llm: LLM, company: Company,
         in_area = []
         for posting in raw:
             accepted, mode, _reason = filters.check_location(posting, settings.location)
-            if accepted:
-                posting.work_mode = mode
+            if not accepted:
+                continue
+            posting.work_mode = mode
+            # Salary, employment type and clearance are checked here too — an
+            # API hands over the whole board, so these cost nothing at all.
+            wanted, _why = settings.requirements.check(posting)
+            if wanted:
                 in_area.append(posting)
         kept, trimmed = filters.narrow_to_relevant(
             in_area, profile, settings.max_postings_per_company)
@@ -293,7 +298,8 @@ def _scan_one(settings: Settings, llm: LLM, company: Company,
 
 
 def scan_boards(settings: Settings, llm: LLM, registry: Registry,
-                profile: Dict[str, Any]
+                profile: Dict[str, Any],
+                on_company: Optional[Callable[[Any, List[Posting]], None]] = None
                 ) -> Tuple[List[Posting], List[str], Dict[str, int]]:
     """Read the boards we know about and collect what is on them."""
     targets = registry.scannable(settings.rescan_after_days)[:settings.max_scans_per_run]
@@ -318,6 +324,10 @@ def scan_boards(settings: Settings, llm: LLM, registry: Registry,
             via_api += 1
         registry.mark_scanned(company, len(found))
         postings.extend(found)
+        if on_company is not None:
+            # Hand this employer's roles on immediately, so a dashboard fills in
+            # while the run continues instead of staying blank until the end.
+            on_company(company, found)
     registry.save()
     stats["boards_read"] = len(targets)
     stats["boards_via_api"] = via_api
@@ -338,9 +348,14 @@ def _drop(posting: Posting, reason: str, dropped: List[Posting],
 
 
 def prefilter(postings: Sequence[Posting], settings: Settings, history: History,
-              corpus: Optional[Corpus] = None,
-              today: Optional[dt.date] = None) -> Tuple[List[Posting], List[Posting], Dict[str, int]]:
-    """Everything we can decide before spending a fetch on verification."""
+              corpus: Optional[Corpus] = None, today: Optional[dt.date] = None,
+              seen_ids: Optional[set] = None, seen_pairs: Optional[set] = None
+              ) -> Tuple[List[Posting], List[Posting], Dict[str, int]]:
+    """Everything we can decide before spending a fetch on verification.
+
+    Called once per employer so results can stream out as they are found; the
+    two ``seen`` sets carry deduplication across those calls.
+    """
     kept: List[Posting] = []
     dropped: List[Posting] = []
     stats: Dict[str, int] = {"raw": len(postings)}
@@ -356,7 +371,7 @@ def prefilter(postings: Sequence[Posting], settings: Settings, history: History,
             continue
         trusted.append(posting)
 
-    for posting in filters.dedupe(trusted):
+    for posting in filters.dedupe(trusted, seen_ids, seen_pairs):
         if filters.excluded_company(posting, settings.exclude_companies):
             _drop(posting, "excluded employer", dropped, stats, "dropped_excluded")
             continue
@@ -367,14 +382,33 @@ def prefilter(postings: Sequence[Posting], settings: Settings, history: History,
         ok, mode, reason = filters.check_location(posting, settings.location)
         posting.work_mode = mode
         if not ok:
-            _drop(posting, reason, dropped, stats, "dropped_location")
-            continue
+            # "It does not say" is not the same as "no", so the unknown policy
+            # decides, not the filter.
+            if reason == "no location stated" and \
+                    settings.requirements.unknown_location == requirements.INCLUDE:
+                pass
+            else:
+                _drop(posting, reason, dropped, stats, "dropped_location")
+                continue
         # Freshness with the date the board claimed; re-checked after verification.
         if posting.posted_date is not None:
             fresh, why = filters.check_freshness(posting, settings.max_age_days, today)
             if not fresh:
                 _drop(posting, why, dropped, stats, "dropped_stale")
                 continue
+        elif settings.requirements.unknown_date == requirements.EXCLUDE \
+                and posting.verified != "live":
+            _drop(posting, "no post date, and you asked to drop undated postings",
+                  dropped, stats, "dropped_undated")
+            continue
+
+        accepted, why = settings.requirements.check(posting)
+        if not accepted:
+            _drop(posting, why, dropped, stats, "dropped_requirements")
+            continue
+        if why:
+            posting.summary = (posting.summary + "\n\n" + why).strip() \
+                if posting.summary else why
         if posting.company_key in applied_keys:
             posting.concerns = "you have already applied to this employer"
         kept.append(posting)
@@ -451,7 +485,14 @@ def verify(settings: Settings, llm: LLM, postings: Sequence[Posting],
 # --- the whole run ---------------------------------------------------------
 
 def find(settings: Settings, *, refresh_profile: bool = False,
-         expand: bool = False, today: Optional[dt.date] = None) -> RunResult:
+         expand: bool = False, today: Optional[dt.date] = None,
+         on_update: Optional[Callable[[List[Posting]], None]] = None) -> RunResult:
+    """Run the pipeline.
+
+    ``on_update`` is called with postings as soon as each stage reaches them —
+    found, then verified, then scored — so a live view can show a role the
+    moment it is discovered rather than after every employer has been read.
+    """
     settings.ensure_data_dir()
     today = today or dt.date.today()
     result = RunResult()
@@ -466,18 +507,37 @@ def find(settings: Settings, *, refresh_profile: bool = False,
 
     expand_registry(settings, llm, registry, profile, force=expand)
     resolve_boards(settings, llm, registry)
-    raw, scan_errors, scan_stats = scan_boards(settings, llm, registry, profile)
+    # Filter each employer's board the moment it is read, so survivors can be
+    # published straight away rather than waiting on the slowest board.
+    seen_ids: set = set()
+    seen_pairs: set = set()
+    kept: List[Posting] = []
+
+    def handle(company: Any, found: List[Posting]) -> None:
+        survivors, dropped_here, stats_here = prefilter(
+            found, settings, history, corpus, today, seen_ids, seen_pairs)
+        kept.extend(survivors)
+        result.dropped.extend(dropped_here)
+        for key, value in stats_here.items():
+            result.stats[key] = result.stats.get(key, 0) + value
+        if on_update and survivors:
+            for posting in survivors:
+                posting.stage = "found"
+            on_update(survivors)
+
+    _raw, scan_errors, scan_stats = scan_boards(
+        settings, llm, registry, profile, on_company=handle)
     result.errors.extend(scan_errors)
     result.stats.update(scan_stats)
-
-    kept, dropped, stats = prefilter(raw, settings, history, corpus, today)
-    result.dropped.extend(dropped)
-    result.stats.update(stats)
 
     kept, dropped, deferred, verify_stats = verify(settings, llm, kept, today)
     result.dropped.extend(dropped)
     result.deferred.extend(deferred)
     result.stats.update(verify_stats)
+    if on_update and kept:
+        for posting in kept:
+            posting.stage = "verified"
+        on_update(kept)
 
     if kept:
         _log("scoring %d surviving role(s)…" % len(kept))
@@ -502,6 +562,10 @@ def find(settings: Settings, *, refresh_profile: bool = False,
     # every role ever scored for this candidate.
     kept = scoring.score_all(kept, settings.weights(),
                              baseline=history.scored_composites(), today=today)
+    for posting in kept:
+        posting.stage = "scored"
+    if on_update and kept:
+        on_update(kept)
     result.recommended = kept[:settings.max_results]
     # Verified, in-location roles that simply did not fit in this report are held
     # over rather than recorded, so tomorrow's run can still surface them.

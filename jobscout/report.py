@@ -51,7 +51,8 @@ def _ordinal(n: int) -> str:
 def render(recommended: Sequence[Posting], dropped: Sequence[Posting],
            stats: Dict[str, int], *, usage: str = "", errors: Sequence[str] = (),
            deferred: Sequence[Posting] = (), today: Optional[dt.date] = None,
-           location_summary: str = "", weights_summary: str = "") -> str:
+           location_summary: str = "", weights_summary: str = "",
+           requirements_summary: str = "") -> str:
     today = today or dt.date.today()
     out: List[str] = []
     out.append("# Job scout — %s" % today.isoformat())
@@ -61,6 +62,9 @@ def render(recommended: Sequence[Posting], dropped: Sequence[Posting],
         out.append("")
     if weights_summary:
         out.append("Ranked by: **%s**" % weights_summary)
+        out.append("")
+    if requirements_summary and requirements_summary != "no extra requirements":
+        out.append("Requirements: **%s**" % requirements_summary)
         out.append("")
 
     if recommended:
@@ -138,6 +142,8 @@ def render(recommended: Sequence[Posting], dropped: Sequence[Posting],
         ("dropped_stale", "Too old"),
         ("dropped_stale_verified", "Too old according to the live page"),
         ("dropped_unverified", "Could not be verified as a real, open listing"),
+        ("dropped_undated", "No posting date (you chose to drop undated ones)"),
+        ("dropped_requirements", "Failed a salary / employment / clearance / title filter"),
         ("dropped_seen", "Already seen on an earlier run"),
         ("dropped_excluded", "Employer on your exclusion list"),
     ]
