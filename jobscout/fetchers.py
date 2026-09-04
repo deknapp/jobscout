@@ -443,6 +443,58 @@ def fetch_icims(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
                        note="%d role(s) on the iCIMS board" % len(postings))
 
 
+# --- Breezy and Rippling ---------------------------------------------------
+
+def fetch_breezy(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
+    host = host_of(url)
+    slug = host.split(".")[0] if host else ""
+    if not slug:
+        return FetchResult(ok=False, note="no Breezy slug in the URL")
+    data = _get_json("https://%s.breezy.hr/json" % slug)
+    postings = []
+    for job in data if isinstance(data, list) else []:
+        place = job.get("location") or {}
+        parts = [str(place.get("city") or "").strip(),
+                 str((place.get("state") or {}).get("id") or "").strip(),
+                 str((place.get("country") or {}).get("name") or "").strip()]
+        location = ", ".join(p for p in parts if p)
+        if place.get("is_remote") and "remote" not in location.lower():
+            location = "Remote — %s" % location if location else "Remote"
+        postings.append(Posting(
+            company=company,
+            title=str(job.get("name") or "").strip(),
+            location=location,
+            url=str(job.get("url") or "").strip(),
+            source="Breezy",
+            posted=_iso_date(job.get("published_date")),
+            salary=str(job.get("salary") or "").strip(),
+        ))
+    return FetchResult(postings=postings, ats="Breezy",
+                       note="%d role(s) on the Breezy board" % len(postings))
+
+
+def fetch_rippling(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
+    slug = _slug(url)
+    if not slug:
+        return FetchResult(ok=False, note="no Rippling board slug in the URL")
+    data = _get_json(
+        "https://api.rippling.com/platform/api/ats/v1/board/%s/jobs" % slug)
+    postings = []
+    for job in data if isinstance(data, list) else []:
+        place = job.get("workLocation") or {}
+        postings.append(Posting(
+            company=company,
+            title=str(job.get("name") or "").strip(),
+            location=str(place.get("label") or place.get("id") or "").strip(),
+            url=str(job.get("url") or "").strip(),
+            source="Rippling",
+            # Rippling's board API carries no posting date at all.
+            posted="",
+        ))
+    return FetchResult(postings=postings, ats="Rippling",
+                       note="%d role(s) on the Rippling board" % len(postings))
+
+
 # --- UltiPro / UKG ---------------------------------------------------------
 
 _ULTIPRO = re.compile(r"/([A-Za-z0-9]+)/JobBoard/([0-9a-fA-F-]{36})")
@@ -541,6 +593,8 @@ FETCHERS: Tuple[Tuple[str, Callable[[str, str, Dict[str, Any]], FetchResult]], .
     ("myworkdaysite.com", fetch_workday),
     ("icims.com", fetch_icims),
     ("recruiting.ultipro.com", fetch_ultipro),
+    ("breezy.hr", fetch_breezy),
+    ("ats.rippling.com", fetch_rippling),
 )
 
 

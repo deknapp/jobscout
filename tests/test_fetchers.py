@@ -282,3 +282,32 @@ def test_ultipro_boards_are_read_directly(monkeypatch):
     assert first.posted == "2026-09-03"
     assert "opportunityId=111" in first.url
     assert second.location == "Remote"
+
+
+BREEZY = [{"name": "Research Engineer",
+           "url": "https://acme.breezy.hr/p/abc-research-engineer",
+           "published_date": "2026-08-30T14:37:22.684Z",
+           "location": {"city": "Albuquerque", "state": {"id": "NM"},
+                        "country": {"name": "United States"}, "is_remote": False},
+           "salary": "$150,000 - $180,000"}]
+
+RIPPLING = [{"uuid": "abc", "name": "Platform Engineer",
+             "url": "https://ats.rippling.com/acme/jobs/abc",
+             "workLocation": {"label": "Santa Fe, NM"}}]
+
+
+def test_breezy(monkeypatch):
+    monkeypatch.setattr(fetchers, "_get_json", lambda url: BREEZY)
+    job = fetchers.fetch("Acme", "https://acme.breezy.hr/", context={}).postings[0]
+    assert job.location == "Albuquerque, NM, United States"
+    assert job.posted == "2026-08-30"
+    assert job.salary == "$150,000 - $180,000"
+
+
+def test_rippling_has_no_dates_and_says_so(monkeypatch):
+    """Its board API carries none, so the undated-posting rule decides."""
+    monkeypatch.setattr(fetchers, "_get_json", lambda url: RIPPLING)
+    job = fetchers.fetch("Acme", "https://ats.rippling.com/acme/jobs",
+                         context={}).postings[0]
+    assert job.location == "Santa Fe, NM"
+    assert job.posted == ""
