@@ -345,6 +345,94 @@ def fetch_workday(company: str, url: str, context: Dict[str, Any]) -> FetchResul
                        note="%d role(s) matched on the Workday board" % len(postings))
 
 
+# --- iCIMS ----------------------------------------------------------------
+#
+# iCIMS is the exception that proves the rule. It publishes no JSON API, but
+# unlike the JavaScript boards it renders its listings SERVER-SIDE — so the jobs
+# really are in the HTML, and can be parsed deterministically. Passing
+# in_iframe=1 returns the bare list without the site chrome.
+
+ICIMS_PAGES = 4
+
+_ICIMS_JOB = re.compile(
+    r'<a href="(?P<url>[^"]*?/jobs/\d+/[^"]*?)"\s+class="iCIMS_Anchor"'
+    r'\s+title="(?P<title>[^"]*)"', re.I)
+_ICIMS_H3 = re.compile(r"<h3[^>]*>\s*(.*?)\s*</h3>", re.S | re.I)
+_ICIMS_LOCATION = re.compile(
+    r'glyphicons-map-marker.*?<dd class="iCIMS_JobHeaderData">\s*<span[^>]*>\s*'
+    r'(?P<location>[^<]+?)\s*</span>', re.S | re.I)
+_ICIMS_DESCRIPTION = re.compile(
+    r'<div class="[^"]*description[^"]*">\s*(?P<text>.*?)</div>', re.S | re.I)
+#: iCIMS writes locations as "US-NM-Albuquerque"; make that readable.
+_ICIMS_PLACE = re.compile(r"^US-([A-Z]{2})-(.+)$")
+
+
+def _icims_location(text: str) -> str:
+    match = _ICIMS_PLACE.match((text or "").strip())
+    if match:
+        return "%s, %s" % (match.group(2).strip(), match.group(1))
+    return (text or "").strip()
+
+
+def _get_html(url: str) -> str:
+    request = urllib.request.Request(url, headers={
+        # iCIMS serves a stub to clients it does not recognise as a browser.
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) jobscout/0.1",
+        "Accept": "text/html,application/xhtml+xml"})
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        return response.read().decode("utf-8", errors="replace")
+
+
+def _parse_icims(company: str, page: str) -> List[Posting]:
+    matches = list(_ICIMS_JOB.finditer(page))
+    postings = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(page)
+        row = page[match.end():end]
+
+        title = match.group("title").strip()
+        heading = _ICIMS_H3.search(row)
+        if heading:
+            title = _plain(heading.group(1), 200) or title
+        # The title attribute is "2441 - Accounts Payable Specialist".
+        title = re.sub(r"^\d+\s*-\s*", "", title).strip()
+
+        place = _ICIMS_LOCATION.search(row)
+        description = _ICIMS_DESCRIPTION.search(row)
+        postings.append(Posting(
+            company=company,
+            title=title,
+            location=_icims_location(place.group("location")) if place else "",
+            url=match.group("url").split("?")[0],
+            source="iCIMS",
+            # The iCIMS list view carries no posting date. Leaving it blank is
+            # honest; the listing being on the live board is what vouches for it.
+            posted="",
+            summary=_plain(description.group("text")) if description else "",
+        ))
+    return postings
+
+
+def fetch_icims(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
+    host = host_of(url)
+    if not host:
+        return FetchResult(ok=False, note="no iCIMS host in the URL")
+    base = "https://%s/jobs/search?ss=1&in_iframe=1" % host
+
+    seen: Dict[str, Posting] = {}
+    for page_number in range(ICIMS_PAGES):
+        page = _get_html(base + ("&pr=%d" % page_number if page_number else ""))
+        found = _parse_icims(company, page)
+        for posting in found:
+            seen.setdefault(posting.url, posting)
+        if not found:
+            break
+
+    postings = list(seen.values())
+    return FetchResult(postings=postings, ats="iCIMS",
+                       note="%d role(s) on the iCIMS board" % len(postings))
+
+
 #: host suffix -> fetcher. Order does not matter; hosts are disjoint.
 FETCHERS: Tuple[Tuple[str, Callable[[str, str, Dict[str, Any]], FetchResult]], ...] = (
     ("boards.greenhouse.io", fetch_greenhouse),
@@ -357,6 +445,7 @@ FETCHERS: Tuple[Tuple[str, Callable[[str, str, Dict[str, Any]], FetchResult]], .
     ("apply.workable.com", fetch_workable),
     ("myworkdayjobs.com", fetch_workday),
     ("myworkdaysite.com", fetch_workday),
+    ("icims.com", fetch_icims),
 )
 
 

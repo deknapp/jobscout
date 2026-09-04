@@ -20,12 +20,29 @@ def test_an_unrelated_title_scores_zero():
     assert title_relevance("Dental Hygienist", PROFILE) == 0.0
 
 
-def test_a_short_board_is_never_trimmed():
-    """Below the cap, an unusual title is exactly what a token overlap loses."""
+def test_a_tiny_board_is_never_trimmed():
+    """On a handful of roles, an unusual title is what a token overlap loses."""
     postings = [Posting(title=t) for t in
-                ["Data Engineer", "Chief of Staff", "Molecular Modeller"]]
+                ["Data Engineer", "Chief of Staff", "Member of Technical Staff"]]
     kept, dropped = narrow_to_relevant(postings, PROFILE, keep=25)
     assert dropped == 0 and len(kept) == 3
+
+
+def test_a_research_institute_board_loses_its_animal_technicians():
+    """The real case: 24 in-area roles, almost none of them for this candidate."""
+    board = [Posting(title=t) for t in [
+        "Accounts Payable Specialist", "Animal Resources Technician",
+        "Biosafety Officer", "Boiler Operator Maintenance Worker III",
+        "Faculty Professor", "Histology Technician", "Staff Scientist",
+        "Research Software Engineer", "Grants Administrator",
+        "Facilities Manager", "Senior Data Engineer"]]
+    kept, dropped = narrow_to_relevant(board, PROFILE, keep=25)
+    titles = [p.title for p in kept]
+    assert "Research Software Engineer" in titles
+    assert "Senior Data Engineer" in titles
+    assert "Animal Resources Technician" not in titles
+    assert "Boiler Operator Maintenance Worker III" not in titles
+    assert dropped == len(board) - len(kept)
 
 
 def test_a_huge_board_keeps_the_plausible_roles():

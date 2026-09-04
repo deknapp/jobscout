@@ -87,3 +87,29 @@ def test_dedupe_collapses_the_same_role_from_two_searches():
         Posting(company="Globex", title="SRE", url="https://jobs.lever.co/globex/2"),
     ]
     assert len(dedupe(postings)) == 2
+
+
+def test_a_soft_rejection_can_be_taken_back():
+    """A rejection caused by our own broken fetch must not bury a real job."""
+    import tempfile
+    from pathlib import Path
+
+    from jobscout.history import DROPPED, History, RECOMMENDED
+
+    path = Path(tempfile.mkdtemp()) / "history.jsonl"
+    history = History(path)
+    good = Posting(company="Iambic", title="Software Engineer",
+                   url="https://jobs.ashbyhq.com/iambic/1")
+    stale = Posting(company="Iambic", title="Medical Writer",
+                    url="https://jobs.ashbyhq.com/iambic/2")
+    kept = Posting(company="Iambic", title="ML Scientist",
+                   url="https://jobs.ashbyhq.com/iambic/3")
+    history.record(good, DROPPED, "not verified")          # our fault: soft
+    history.record(stale, DROPPED, "posted 78 days ago")   # the job's: permanent
+    history.record(kept, RECOMMENDED)
+
+    assert history.forget_transient() == 1
+    reloaded = History(path)
+    assert not reloaded.seen_before(good)[0]        # reconsidered
+    assert reloaded.seen_before(stale)[0]           # still ruled out
+    assert reloaded.seen_before(kept)[0]            # still recommended

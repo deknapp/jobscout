@@ -153,3 +153,64 @@ def test_workday_resolves_a_multi_location_posting(monkeypatch):
     assert "Los Alamos, NM" in resolved.location
     assert resolved.posted == "2026-08-29"      # the real date beats "30+ days"
     assert "Build things" in resolved.summary
+
+
+def test_a_bad_board_url_already_on_disk_is_healed_when_loaded(tmp_path):
+    """The repair has to run on read, not only at resolution.
+
+    A malformed URL written by an older run would otherwise sit in the registry
+    forever, quietly 404ing and falling back to a slow agent scan every time.
+    """
+    import json
+
+    from jobscout.companies import Registry
+
+    path = tmp_path / "companies.json"
+    path.write_text(json.dumps({"companies": [
+        {"name": "Descartes Labs", "careers_url": "https://jobs.lever.co/descarteslabs.com",
+         "status": "resolved"}]}), encoding="utf-8")
+
+    company = Registry(path).get("Descartes Labs")
+    assert company.careers_url == "https://jobs.lever.co/descarteslabs"
+
+
+# --- iCIMS -----------------------------------------------------------------
+
+ICIMS_PAGE = '''
+<div class="iCIMS_JobsTable">
+  <a href="https://careers-x.icims.com/jobs/2441/accounts-payable-specialist/job?in_iframe=1"
+     class="iCIMS_Anchor" title="2441 - Accounts Payable Specialist">
+     <h3 > Accounts Payable Specialist</h3></a>
+  <div class="col-xs-12 description">Process &amp; reconcile invoices.</div>
+  <div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">
+    <span class="glyphicons glyphicons-map-marker"></span></dt>
+    <dd class="iCIMS_JobHeaderData"><span > US-NM-Albuquerque</span></dd></div>
+
+  <a href="https://careers-x.icims.com/jobs/2502/research-software-engineer/job?in_iframe=1"
+     class="iCIMS_Anchor" title="2502 - Research Software Engineer">
+     <h3 > Research Software Engineer</h3></a>
+  <div class="col-xs-12 description">Build analysis pipelines.</div>
+  <div class="iCIMS_JobHeaderTag"><dt class="iCIMS_JobHeaderField">
+    <span class="glyphicons glyphicons-map-marker"></span></dt>
+    <dd class="iCIMS_JobHeaderData"><span > US-NM-Los Alamos</span></dd></div>
+</div>
+'''
+
+
+def test_icims_is_parsed_out_of_server_rendered_html(monkeypatch):
+    """iCIMS publishes no JSON, but unlike the SPA boards the jobs are really
+    in the HTML, so they can be read without a model."""
+    pages = [ICIMS_PAGE, ""]
+    monkeypatch.setattr(fetchers, "_get_html", lambda url: pages.pop(0) if pages else "")
+
+    result = fetchers.fetch("Lovelace", "https://careers-x.icims.com/jobs/intro",
+                            context={})
+    assert result.ats == "iCIMS"
+    assert len(result.postings) == 2
+
+    first, second = result.postings
+    assert first.title == "Accounts Payable Specialist"   # the "2441 - " prefix goes
+    assert first.location == "Albuquerque, NM"            # US-NM-Albuquerque decoded
+    assert "reconcile invoices" in first.summary
+    assert "?" not in first.url                           # the iframe param is dropped
+    assert second.location == "Los Alamos, NM"

@@ -259,6 +259,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def cmd_history(args: argparse.Namespace) -> int:
     settings = load_settings(require_applications=False)
     history = History(settings.history_path)
+    if args.retry:
+        removed = history.forget_transient()
+        print("cleared %d soft rejection(s) — they will be reconsidered next run"
+              % removed)
+        return 0
     entries = history.entries
     if args.status:
         entries = [e for e in entries if e.status == args.status]
@@ -344,6 +349,9 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--status", choices=[RECOMMENDED, APPLIED, DISMISSED, "dropped"])
     history.add_argument("--limit", type=int, default=40)
     history.add_argument("-v", "--verbose", action="store_true", help="show rejection reasons")
+    history.add_argument("--retry", action="store_true",
+                         help="forget soft rejections (a page that would not load, "
+                              "a verification that failed) so they are reconsidered")
     history.set_defaults(func=cmd_history)
 
     mark = subparsers.add_parser("mark", help="record that you applied to, or dismissed, a role")

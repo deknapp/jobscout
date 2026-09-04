@@ -77,6 +77,11 @@ Workable         apply.workable.com/api/v1/widget/accounts/<slug>
 Workday          <tenant>.<dc>.myworkdayjobs.com/wday/cxs/<tenant>/<site>/jobs
 ```
 
+**iCIMS** is the exception that proves the rule. It publishes no JSON API — but
+unlike the JavaScript boards it renders its listings *server-side*, so the jobs
+really are in the HTML and can be parsed deterministically. That matters: iCIMS
+is what a lot of research institutes and defence contractors run.
+
 Workday needs a little more care, and gets it. Its boards run to thousands of
 roles, so jobscout drives the board's own search with your target titles rather
 than paging the whole thing. It reports dates as "Posted 30+ Days Ago", which are
@@ -146,7 +151,14 @@ just the ones it recommends — so a later run neither repeats a recommendation 
 pays to re-check a rejection. Rejections come in two kinds:
 
 * **permanent** (wrong state, too old, employer excluded) — suppressed forever
-* **transient** (a page that wouldn't load) — retried after a week
+* **transient** (a page that wouldn't load) — retried after two days
+
+That distinction earns its keep. An early run's verification step fetched a
+JavaScript job board, got an empty shell, and recorded a perfectly good role as
+"not verified" — a rejection that said something about our fetch, not about the
+job. `jobscout history --retry` takes back every soft rejection so they are
+reconsidered, which is the right move whenever the cause was a bug rather than
+the job.
 
 Roles that were verified and in-location but simply didn't fit in this run's
 report are *deliberately not recorded*, so tomorrow's run can still surface them.
@@ -362,7 +374,7 @@ history stops the pipeline from re-verifying anything it has already ruled out.
 | `corpus.py` | reads your applications folder (PDF, DOCX, text) |
 | `agents.py` | the six prompts: profile, propose, resolve, scan, verify, rank |
 | `sources.py` | which hosts count as a real posting |
-| `fetchers.py` | reads Greenhouse/Lever/Ashby/SmartRecruiters/Workable boards from their JSON APIs |
+| `fetchers.py` | reads Greenhouse/Lever/Ashby/SmartRecruiters/Workable/Workday boards from their JSON APIs, and iCIMS from its server-rendered HTML |
 | `filters.py` | the hard location / freshness / verification gates |
 | `companies.py` | the employer registry that accumulates across runs |
 | `history.py` | the append-only log that prevents repeats |

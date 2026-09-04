@@ -25,7 +25,12 @@ DISMISSED = "dismissed"
 DROPPED = "dropped"
 
 #: How long a transient rejection keeps a posting out of the running.
-TRANSIENT_SUPPRESSION_DAYS = 7
+#:
+#: Deliberately short. A transient rejection says something went wrong on OUR
+#: side — a page would not load, a verification timed out — not that the job is
+#: unsuitable. Locking a good role out for a week because of our own failure is
+#: a worse error than re-checking it tomorrow, and re-checking is cheap.
+TRANSIENT_SUPPRESSION_DAYS = 2
 
 #: Rejection reasons that will never change on their own.
 PERMANENT_PREFIXES = (
@@ -209,6 +214,26 @@ class History:
             entry.note = note
         self._rewrite()
         return entry
+
+    def forget_transient(self) -> int:
+        """Drop every soft rejection, so they are reconsidered on the next run.
+
+        For when a rejection reflects a bug that has since been fixed rather
+        than anything about the job — `jobscout history --retry`.
+        """
+        keep = [e for e in self.entries
+                if not (e.status == DROPPED and not e.permanent)]
+        removed = len(self.entries) - len(keep)
+        if removed:
+            self.entries = keep
+            self._by_id = {}
+            self._by_url = {}
+            self._by_role = {}
+            entries, self.entries = keep, []
+            for entry in entries:
+                self._index(entry)
+            self._rewrite()
+        return removed
 
     def by_status(self, status: str) -> List[Entry]:
         return [e for e in self.entries if e.status == status]

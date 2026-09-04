@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from .corpus import normalize_company
+from .sources import clean_board_url
 
 NEW = "new"            # proposed by the model, careers board not found yet
 RESOLVED = "resolved"  # we know where its jobs live
@@ -71,6 +72,10 @@ class Registry:
         for item in raw.get("companies", []):
             fields = set(Company.__dataclass_fields__)  # type: ignore[attr-defined]
             company = Company(**{k: v for k, v in item.items() if k in fields})
+            # Heal a malformed board URL on the way in, not only when it is first
+            # resolved: a bad one written by an older run (or edited by hand)
+            # would otherwise sit in the file forever, silently 404ing.
+            company.careers_url = clean_board_url(company.careers_url)
             if company.key:
                 self.companies[company.key] = company
 

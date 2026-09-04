@@ -261,19 +261,26 @@ def title_relevance(title: str, profile: Dict) -> float:
     return len(title_tokens & wanted) / float(len(title_tokens))
 
 
+#: A board this small is passed through untouched. Under a handful of roles it
+#: is cheaper to rank them all properly than to risk discarding the one with an
+#: idiosyncratic title ("Member of Technical Staff"), which is exactly what a
+#: token overlap gets wrong.
+SMALL_BOARD = 8
+
+
 def narrow_to_relevant(postings: Sequence[Posting], profile: Dict,
                        keep: int) -> Tuple[List[Posting], int]:
     """Trim an employer's whole board down to the plausibly-relevant part.
 
-    Returns ``(kept, dropped_count)``. Below ``keep`` postings nothing is cut —
-    a short list is cheap to rank properly, and an unusual title is exactly the
-    kind of thing a crude token overlap would throw away by mistake.
+    Returns ``(kept, dropped_count)``. A research institute's board is mostly
+    animal technicians and boiler operators; passing those to the ranking agent
+    wastes its attention on roles nobody is going to apply for.
     """
     postings = list(postings)
-    if len(postings) <= keep:
+    if len(postings) <= SMALL_BOARD:
         return postings, 0
     scored = sorted(postings, key=lambda p: -title_relevance(p.title, profile))
-    kept = [p for p in scored[:keep] if title_relevance(p.title, profile) > 0]
+    kept = [p for p in scored if title_relevance(p.title, profile) > 0][:keep]
     return kept, len(postings) - len(kept)
 
 
