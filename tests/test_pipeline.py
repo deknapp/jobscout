@@ -306,3 +306,24 @@ def test_ranking_batches_so_a_big_result_set_still_gets_scored(settings, monkeyp
 
     assert len(scores) == 55, "every role must come back scored"
     assert max(seen_batches) <= agents.RANK_BATCH
+
+
+def test_employers_are_searched_from_several_angles_at_once(settings, monkeypatch):
+    """One general question asked five times returns the same famous names."""
+    from jobscout import agents
+    from jobscout.companies import Company, Registry
+
+    asked = []
+
+    def fake_propose(llm, profile, policy, known, count=25, angle=""):
+        asked.append(angle)
+        return [Company(name="Employer %s-%d" % (angle[:6], i)) for i in range(count)]
+
+    monkeypatch.setattr(agents, "propose_companies", fake_propose)
+    monkeypatch.setattr(fetchers, "discover_ats", lambda url: "")
+
+    settings.company_target = 60
+    pipeline.expand_registry(settings, None, Registry(settings.companies_path), {})
+
+    assert len(asked) == len(agents.SEARCH_ANGLES)
+    assert len(set(asked)) == len(asked), "each angle must be distinct"

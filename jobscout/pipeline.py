@@ -196,48 +196,48 @@ def load_or_build_profile(settings: Settings, llm: LLM, corpus: Corpus,
 
 # --- employers -------------------------------------------------------------
 
-#: Batches of employer proposals in a single run. The registry is the search
-#: surface, so one batch of 25 is not a search — it is a sample.
-MAX_PROPOSE_BATCHES = 5
-
-
 def expand_registry(settings: Settings, llm: LLM, registry: Registry,
                     profile: Dict[str, Any], force: bool = False) -> int:
-    """Keep asking for employers until the registry reaches its target.
+    """Fill out the employer registry, several angles at once.
 
-    Asking once and stopping left the search resting on a couple of dozen
-    employers, which is why so little came back. Each batch is told who is
-    already on the list, so it proposes different ones.
+    Asking one general question repeatedly returns the same famous names each
+    time, and asking it five times in a row takes half an hour. The angles in
+    :data:`agents.SEARCH_ANGLES` look for different KINDS of employer — local
+    institutions, remote-first companies, product matches, adjacent industries,
+    recently funded startups — and run in parallel, so breadth costs no extra
+    waiting.
     """
+    active = registry.active()
+    short = settings.company_target - len(active)
+    if short <= 0 and not force:
+        return 0
+
+    angles = list(agents.SEARCH_ANGLES)
+    per_angle = max(8, min(settings.propose_batch,
+                           -(-max(short, settings.propose_batch) // len(angles))))
+    known = registry.known_names()
+    _log("proposing employers from %d angles at once — %d each (%d known, "
+         "aiming for %d)…" % (len(angles), per_angle, len(active),
+                              settings.company_target))
+
     added = 0
-    for batch in range(MAX_PROPOSE_BATCHES):
-        active = registry.active()
-        short = settings.company_target - len(active)
-        if short <= 0 and not (force and batch == 0):
-            break
-        want = settings.propose_batch if (force and batch == 0) \
-            else min(settings.propose_batch, short)
-        if want <= 0:
-            break
-        _log("proposing %d more employer(s) (%d known, aiming for %d)…"
-             % (want, len(active), settings.company_target))
-        try:
-            proposed = agents.propose_companies(
-                llm, profile, settings.location, registry.known_names(), count=want)
-        except LLMError as exc:
-            _log("  employer proposal failed: %s" % str(exc)[:140])
-            break
-        new_here = 0
-        for company in proposed:
+    for angle, proposed, error in _parallel(
+            angles,
+            lambda a: agents.propose_companies(llm, profile, settings.location,
+                                               known, count=per_angle, angle=a),
+            min(len(angles), max(2, settings.max_workers)),
+            stage="searching for", label=lambda a: a.split(":")[0].split(".")[0][:44],
+            detail=lambda names: "%d employer(s) proposed" % len(names or [])):
+        if error is not None:
+            _log("  one angle failed: %s" % str(error)[:120])
+            continue
+        for company in proposed or []:
             before = len(registry.companies)
             registry.add(company)
             if len(registry.companies) > before:
-                new_here += 1
-        added += new_here
-        registry.save()
-        _log("  +%d employer(s) — registry now: %s" % (new_here, registry.summary()))
-        if new_here == 0:
-            break      # it has run out of new names; stop paying for more
+                added += 1
+    registry.save()
+    _log("added %d new employer(s) — registry now: %s" % (added, registry.summary()))
     return added
 
 

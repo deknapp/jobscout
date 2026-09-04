@@ -158,8 +158,34 @@ MATERIALS
 
 # --- 2. company generation -------------------------------------------------
 
+#: Five ways of looking for an employer. Asking one general question five times
+#: returns the same famous names five times; asking five different questions
+#: covers the map — and they run at once, so breadth costs no extra waiting.
+SEARCH_ANGLES = (
+    "Large institutions PHYSICALLY located in the accepted area: national labs, "
+    "federal facilities, universities, hospitals, utilities, state agencies, and "
+    "the defence and engineering contractors that cluster around them.",
+
+    "Remote-first companies anywhere in the country whose core product is in "
+    "this candidate's strongest technical domain. They never need to be near "
+    "the candidate, so geography should not narrow this list at all.",
+
+    "Companies whose actual product or research matches the candidate's "
+    "differentiators — the unusual combination on their CV, not the generic "
+    "part. Smaller and less famous is fine, and often better.",
+
+    "Adjacent industries that hire this background without advertising for it "
+    "by name: sectors where the same skills solve a differently-worded problem.",
+
+    "Startups and scale-ups, both local and remote-first, funded in the last few "
+    "years in this candidate's domains — they hire fast and are missed by every "
+    "list of well-known employers.",
+)
+
+
 def propose_companies(llm: LLM, profile: Dict[str, Any], policy: LocationPolicy,
-                      known: Sequence[str], count: int = 25) -> List[Company]:
+                      known: Sequence[str], count: int = 25,
+                      angle: str = "") -> List[Company]:
     """Name employers who could plausibly hire this candidate, in this geography.
 
     This is the step that makes the tool work: instead of trawling the open web
@@ -172,12 +198,11 @@ could plausibly hire this person, and whose jobs would satisfy the location rule
 
 %s
 
-Use web search to ground your list in reality. Good sources of candidates:
-  * major employers physically located in the accepted area (national labs,
-    universities, hospitals, utilities, defence contractors, state agencies,
-    local startups and scale-ups)
-  * remote-first companies in the candidate's domains that hire nationwide
-  * companies whose products or research match the candidate's differentiators
+WHERE TO LOOK THIS TIME — stay inside this brief, it is one of several being
+run in parallel and overlapping with the others wastes the search:
+%s
+
+Use web search to ground your list in reality.
 
 Rules:
   * Real organisations only, with a name you have seen on the web. No invented names.
@@ -200,8 +225,9 @@ Return ONLY a JSON array:
 
 CANDIDATE PROFILE
 =================
-%s""" % (count, _policy_block(policy), known_block,
-         json.dumps(profile, indent=2)[:6000])
+%s""" % (count, _policy_block(policy),
+         angle or "Any employer who fits the candidate and the location rule.",
+         known_block, json.dumps(profile, indent=2)[:6000])
 
     data = llm.ask_json(prompt, strong=True, system=SYSTEM, web=True)
     if isinstance(data, dict):
