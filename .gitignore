@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# NOTHING PERSONAL EVER GETS COMMITTED.
+#
+# jobscout reads your real application materials from a folder OUTSIDE this
+# repo (JOBSCOUT_APPLICATIONS_DIR) and writes its state to a data dir OUTSIDE
+# this repo (JOBSCOUT_DATA_DIR). config.py refuses to run if either one is
+# inside the repo. These rules are belt-and-braces on top of that.
+# ---------------------------------------------------------------------------
+
+# secrets / local config
+.env
+.env.*
+!.env.example
+
+# any application material that somehow lands in the tree
+*.pdf
+*.docx
+*.doc
+*.rtf
+*.png
+*.jpg
+*.jpeg
+resume*
+Resume*
+*_Resume*
+cover_letter*
+CoverLetter*
+
+# jobscout state / output
+data/
+out/
+reports/
+applications/
+profile.json
+history.jsonl
+*.report.md
+
+# python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# macOS
+.DS_Store
