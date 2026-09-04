@@ -276,9 +276,16 @@ WHAT FITS: titles like %s; work involving %s. Seniority around "%s". Close
 matches count — an exact title match is not required — but a role the candidate
 plainly cannot do, or that is far below their level, does not.
 
-METHOD: actually fetch the board. If it paginates or has a search box, fetch the
-filtered/next pages too. For each matching role, give the direct URL to that
-specific posting on that same site.
+METHOD: actually fetch the board.
+  * Big employers list thousands of roles. USE THE BOARD'S OWN FILTERS rather
+    than paging through everything: most boards take a location and a keyword in
+    the query string (e.g. ?q=data+engineer&locations=New+Mexico, or
+    ?location=Remote). Search the target titles, and filter to the accepted
+    locations and to remote, before you read results.
+  * If it paginates, fetch the next pages too, but stop once you have covered the
+    filtered results.
+  * Return at most 15 roles. If more match, keep the best fits.
+  * For each role, give the direct URL to that specific posting on that same site.
 
 CRITICAL: list only roles you SAW on a page you fetched. If the board has no
 matching roles, return []. An empty array is a good answer. Do not fill space.
