@@ -374,12 +374,18 @@ def _icims_location(text: str) -> str:
     return (text or "").strip()
 
 
+#: iCIMS is paged, so a slow board multiplies its own latency. A shorter budget
+#: per page, and stopping at the first timeout, keeps one sluggish employer from
+#: holding up everyone else's boards.
+HTML_TIMEOUT = 12
+
+
 def _get_html(url: str) -> str:
     request = urllib.request.Request(url, headers={
         # iCIMS serves a stub to clients it does not recognise as a browser.
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) jobscout/0.1",
         "Accept": "text/html,application/xhtml+xml"})
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+    with urllib.request.urlopen(request, timeout=HTML_TIMEOUT) as response:
         return response.read().decode("utf-8", errors="replace")
 
 
@@ -421,7 +427,11 @@ def fetch_icims(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
 
     seen: Dict[str, Posting] = {}
     for page_number in range(ICIMS_PAGES):
-        page = _get_html(base + ("&pr=%d" % page_number if page_number else ""))
+        try:
+            page = _get_html(base + ("&pr=%d" % page_number if page_number else ""))
+        except Exception:
+            # Keep whatever earlier pages gave us rather than losing the board.
+            break
         found = _parse_icims(company, page)
         for posting in found:
             seen.setdefault(posting.url, posting)
