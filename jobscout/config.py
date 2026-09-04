@@ -129,9 +129,19 @@ class Settings:
     model_strong: str = "claude-opus-5"
     #: A posting older than this many days is dropped as stale.
     max_age_days: int = 30
-    #: How many search angles the discovery pass runs, and how many roles it reports.
-    search_queries: int = 6
+    #: How many roles a report shows.
     max_results: int = 10
+    #: How many employers the registry should hold before it stops proposing more.
+    company_target: int = 30
+    #: How many employers to propose in one go when the registry is short.
+    propose_batch: int = 20
+    #: Per-run work caps — every one of these is a billed model call, so they are
+    #: the dial between "cheap run" and "thorough run".
+    max_resolve_per_run: int = 10
+    max_scans_per_run: int = 12
+    max_verify_per_run: int = 20
+    #: Do not re-read an employer's board more often than this.
+    rescan_after_days: int = 3
     #: Concurrency for the per-query / per-candidate agent calls.
     max_workers: int = 4
     #: Seconds before a single agent call is abandoned.
@@ -157,6 +167,10 @@ class Settings:
     @property
     def cache_dir(self) -> Path:
         return self.data_dir / "cache"
+
+    @property
+    def companies_path(self) -> Path:
+        return self.data_dir / "companies.json"
 
     def ensure_data_dir(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -223,7 +237,7 @@ def load_settings(require_applications: bool = True) -> Settings:
             "JOBSCOUT_APPLICATIONS_DIR is not set.\n"
             "Point it at the folder holding the applications you have already "
             "written (one subfolder per company works best), e.g.\n"
-            '  JOBSCOUT_APPLICATIONS_DIR="$HOME/Desktop/Job Search"\n'
+            '  JOBSCOUT_APPLICATIONS_DIR="$HOME/job-applications"\n'
             "Run `jobscout init` to write a starter .env."
         )
     applications_dir = Path(os.path.expanduser(apps_raw)) if apps_raw else Path(os.devnull)
@@ -249,8 +263,13 @@ def load_settings(require_applications: bool = True) -> Settings:
         model_cheap=_env("JOBSCOUT_MODEL_CHEAP", "claude-haiku-4-5"),
         model_strong=_env("JOBSCOUT_MODEL_STRONG", "claude-opus-5"),
         max_age_days=_env_int("JOBSCOUT_MAX_AGE_DAYS", 30),
-        search_queries=_env_int("JOBSCOUT_SEARCH_QUERIES", 6),
         max_results=_env_int("JOBSCOUT_MAX_RESULTS", 10),
+        company_target=_env_int("JOBSCOUT_COMPANY_TARGET", 30),
+        propose_batch=_env_int("JOBSCOUT_PROPOSE_BATCH", 20),
+        max_resolve_per_run=_env_int("JOBSCOUT_MAX_RESOLVE_PER_RUN", 10),
+        max_scans_per_run=_env_int("JOBSCOUT_MAX_SCANS_PER_RUN", 12),
+        max_verify_per_run=_env_int("JOBSCOUT_MAX_VERIFY_PER_RUN", 20),
+        rescan_after_days=_env_int("JOBSCOUT_RESCAN_AFTER_DAYS", 3),
         max_workers=_env_int("JOBSCOUT_MAX_WORKERS", 4),
         timeout_seconds=_env_int("JOBSCOUT_TIMEOUT_SECONDS", 600),
         location=load_location_policy(data_dir),

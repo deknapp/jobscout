@@ -165,9 +165,13 @@ def is_employer_host(host: str, company: str) -> bool:
     for token in tokens:
         if token in flat:
             return True
-    # Acronyms: "Los Alamos National Laboratory" -> "lanl".
-    acronym = "".join(t[0] for t in tokens)
-    if len(acronym) >= 3 and acronym in flat:
+    # Acronyms: "Los Alamos National Laboratory" -> "lanl". Built from the FULL
+    # name, since the acronym is exactly what the noise words contribute to, and
+    # matched against whole domain labels so it cannot hit mid-word by accident.
+    words = [w for w in re.split(r"[^a-z0-9]+", (company or "").lower())
+             if w and w not in ("the", "of", "and", "for", "a")]
+    acronym = "".join(w[0] for w in words)
+    if len(acronym) >= 3 and acronym in labels:
         return True
     return False
 

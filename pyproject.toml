@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobscout"
+version = "0.1.0"
+description = "An agentic job finder that reads the applications you have already written, searches employers' own job boards, and enforces your location constraint in code."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = [
+    "pypdf>=4.0",
+    "python-docx>=1.1",
+]
+
+[project.optional-dependencies]
+api = ["anthropic>=0.40"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+jobscout = "jobscout.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["jobscout*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

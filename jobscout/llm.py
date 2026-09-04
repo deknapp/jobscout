@@ -220,11 +220,16 @@ class AnthropicBackend(Backend):
 
 
 class MockBackend(Backend):
-    """Canned responses keyed by a marker the prompt carries."""
+    """Canned responses keyed by a marker the prompt carries.
+
+    A response may be a string, or a callable taking the prompt — the callable
+    form lets a test answer per-posting (echoing back a location, say) rather
+    than giving every call the same reply.
+    """
 
     name = "mock"
 
-    def __init__(self, responses: Optional[Dict[str, str]] = None,
+    def __init__(self, responses: Optional[Dict[str, Any]] = None,
                  default: str = "{}") -> None:
         self.responses = responses or {}
         self.default = default
@@ -235,7 +240,7 @@ class MockBackend(Backend):
         self.prompts.append(prompt)
         for marker, reply in self.responses.items():
             if marker in prompt:
-                return Response(text=reply)
+                return Response(text=reply(prompt) if callable(reply) else reply)
         return Response(text=self.default)
 
 

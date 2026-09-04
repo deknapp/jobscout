@@ -116,13 +116,20 @@ def detect_work_mode(text: str) -> str:
     return "unknown"
 
 
+#: A geographic fence is a place list, not a sentence. Anything longer is the
+#: regex having run off into prose, and is discarded rather than acted on.
+MAX_FENCE_WORDS = 8
+
+
 def remote_fences(text: str) -> List[str]:
     """Region restrictions attached to a remote role, if any are stated."""
     found: List[str] = []
     for pattern in FENCE_PATTERNS:
         for match in pattern.finditer(text or ""):
-            fence = match.group(1).strip().lower()
-            if fence and fence not in found:
+            fence = match.group(1).strip().lower().strip("-–—:,; ")
+            if not fence or len(fence.split()) > MAX_FENCE_WORDS:
+                continue
+            if fence not in found:
                 found.append(fence)
     return found
 
@@ -135,7 +142,10 @@ def check_location(posting: Posting, policy: LocationPolicy) -> Tuple[bool, str,
     doubt, because the cost of a false accept (an application you can't take) is
     much higher than a false reject (one of many jobs).
     """
-    text = " ".join(part for part in (posting.location, posting.summary) if part).strip()
+    # The posting's own location field is the evidence. The summary is only a
+    # fallback when there is no location field: mixing the two lets a sentence
+    # of prose masquerade as a geographic restriction.
+    text = (posting.location or "").strip() or (posting.summary or "").strip()
     if not text:
         return False, "unknown", "no location stated"
 
