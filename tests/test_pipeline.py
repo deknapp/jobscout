@@ -283,3 +283,26 @@ def test_free_boards_are_read_every_run_and_never_capped(settings, monkeypatch):
 
     # All 25 API boards read despite being scanned today and despite the cap.
     assert len(read) == 25
+
+
+def test_ranking_batches_so_a_big_result_set_still_gets_scored(settings, monkeypatch):
+    """The listing used to be truncated at 20k characters mid-JSON."""
+    from jobscout import agents
+    from jobscout.llm import LLM as _LLM
+    from jobscout.models import Posting as _Posting
+
+    many = [_Posting(company="Co %d" % i, title="Engineer %d" % i,
+                     url="https://boards.greenhouse.io/c/%d" % i) for i in range(55)]
+    seen_batches = []
+
+    def fake_batch(llm, batch, profile):
+        seen_batches.append(len(batch))
+        return {p.id: {"fit_score": 70, "likelihood": 60, "rationale": "",
+                       "odds": "", "resembles": "", "concerns": "", "angle": ""}
+                for p in batch}
+
+    monkeypatch.setattr(agents, "_rank_batch", fake_batch)
+    scores = agents.rank_postings(_LLM.from_settings(settings), many, {})
+
+    assert len(scores) == 55, "every role must come back scored"
+    assert max(seen_batches) <= agents.RANK_BATCH

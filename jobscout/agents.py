@@ -404,11 +404,37 @@ Meaning of each status:
 
 # --- 6. ranking ------------------------------------------------------------
 
+#: Roles per ranking call. The listing used to be pasted into one prompt and
+#: truncated at 20k characters, which quietly dropped everything past the cut —
+#: and a JSON array sliced mid-object often failed to parse at all, losing the
+#: scores for the whole run.
+RANK_BATCH = 20
+
+
 def rank_postings(llm: LLM, postings: Sequence[Posting],
                   profile: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
-    """Score the survivors against the candidate's actual background."""
+    """Score the survivors against the candidate's actual background.
+
+    Batched, because a big result set is exactly when the scores matter most.
+    """
+    postings = list(postings)
     if not postings:
         return {}
+    if len(postings) > RANK_BATCH:
+        from concurrent.futures import ThreadPoolExecutor
+
+        batches = [postings[i:i + RANK_BATCH]
+                   for i in range(0, len(postings), RANK_BATCH)]
+        merged: Dict[str, Dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=min(4, len(batches))) as pool:
+            for scores in pool.map(lambda b: _rank_batch(llm, b, profile), batches):
+                merged.update(scores)
+        return merged
+    return _rank_batch(llm, postings, profile)
+
+
+def _rank_batch(llm: LLM, postings: Sequence[Posting],
+                profile: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     listing = [
         {"id": p.id, "company": p.company, "title": p.title, "location": p.location,
          "posted": p.posted, "salary": p.salary, "summary": p.summary}
@@ -456,9 +482,12 @@ POSTINGS
 ========
 %s""" % (", ".join(_as_list(profile.get("applied_companies"))) or "nothing recorded",
          json.dumps(profile, indent=2)[:5000],
-         json.dumps(listing, indent=2)[:20000])
+         json.dumps(listing, indent=2))
 
-    data = llm.ask_json(prompt, strong=True, system=SYSTEM)
+    try:
+        data = llm.ask_json(prompt, strong=True, system=SYSTEM)
+    except LLMError:
+        return {}      # one bad batch must not cost the whole run its scores
     if isinstance(data, dict):
         data = data.get("rankings") or data.get("postings") or []
     scores: Dict[str, Dict[str, Any]] = {}
