@@ -253,8 +253,10 @@ them into sliders.
 jobscout serve
 ```
 
-Opens `http://127.0.0.1:8765` — a local board you work through, rather than a
-wall of terminal text you re-read:
+Opens `http://127.0.0.1:8765`. **Nothing has to be set up first** — no `.env`, no
+`init`, no config file. You pick the folder in the page (with a folder browser
+that tells you what it found there before you commit), set your location and
+filters, and run:
 
 * **roles appear as they are found**, not after the last employer is read — a
   run publishes each board's survivors immediately, and the cards fill in from
@@ -268,6 +270,12 @@ wall of terminal text you re-read:
   and it writes straight to the history, so the next run stops offering it
 * start a run from the page and watch the log as it happens
 * the employer registry, with a link to each board jobscout found
+* **the saved cache is opt-in.** Reusing the employer list, profile and history
+  makes a run faster and stops repeats — but it also means an older search is
+  shaping this one, so it is a checkbox you tick, not an assumption. Left off, a
+  run gets its own folder under `<data_dir>/runs/` with a fresh profile, a fresh
+  employer list and no memory of what you have already seen.
+* nothing is written back to your saved settings unless you tick **Remember**
 
 It is built on the Python standard library — no framework, no CDN, no external
 requests of any kind — because the page is looking at your job search and that

@@ -326,9 +326,10 @@ def cmd_filters(args: argparse.Namespace) -> int:
 # --- serve -----------------------------------------------------------------
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    """The web app configures itself, so nothing needs to be set up first."""
     from .web import serve
 
-    settings = load_settings()
+    settings = load_settings(require_applications=False)
     return serve(settings, port=args.port, open_browser=not args.no_browser)
 
 
@@ -444,7 +445,8 @@ def build_parser() -> argparse.ArgumentParser:
     filters.add_argument("--clear", action="store_true", help="reset every filter to its default")
     filters.set_defaults(func=cmd_filters)
 
-    serve = subparsers.add_parser("serve", help="open the local web app")
+    serve = subparsers.add_parser(
+        "serve", help="open the local web app (no setup needed — configure it there)")
     serve.add_argument("--port", type=int, help="port to listen on (default 8765)")
     serve.add_argument("--no-browser", action="store_true", help="do not open a browser")
     serve.set_defaults(func=cmd_serve)

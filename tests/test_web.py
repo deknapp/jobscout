@@ -131,3 +131,84 @@ def test_requirements_survive_a_restart(app, tmp_path):
     assert reloaded.salary_min == 150000
     assert reloaded.unknown_salary == "exclude"
     assert reloaded.exclude_title_words == ["sales", "intern"]
+
+
+# --- the app configures itself; nothing is assumed -------------------------
+
+def test_the_app_starts_with_nothing_configured(tmp_path):
+    """`jobscout serve` must not require a .env or any prior setup."""
+    blank = Settings(applications_dir=tmp_path / "nope",
+                     data_dir=tmp_path / "state", backend="mock")
+    application = App(blank)
+    assert not application.configured()
+    assert not application.start_run()["started"]
+    assert "choose the folder" in application.start_run()["reason"]
+
+
+def test_the_folder_is_chosen_in_the_page_and_inspected_first(tmp_path):
+    apps = tmp_path / "apps" / "Some Lab"
+    apps.mkdir(parents=True)
+    (apps / "resume.txt").write_text("Nine years of pipelines.", encoding="utf-8")
+
+    application = App(Settings(applications_dir=tmp_path / "nope",
+                               data_dir=tmp_path / "state", backend="mock"))
+
+    listing = application.browse(str(tmp_path))
+    assert "apps" in [e["name"] for e in listing["entries"]]
+
+    # You are told what is in a folder before committing to it.
+    look = application.inspect(str(tmp_path / "apps"))
+    assert look["ok"] and look["documents"] == 1 and look["companies"] == ["Some Lab"]
+
+    assert application.configure({"applications_dir": str(tmp_path / "apps")})["ok"]
+    assert application.configured()
+
+
+def test_a_folder_with_nothing_readable_is_reported_not_silently_accepted(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    application = App(Settings(applications_dir=tmp_path, data_dir=tmp_path / "s",
+                               backend="mock"))
+    look = application.inspect(str(empty))
+    assert not look["ok"] and "no readable documents" in look["note"]
+
+
+def test_location_is_set_from_the_page(tmp_path):
+    application = App(Settings(applications_dir=tmp_path, data_dir=tmp_path / "s",
+                               backend="mock"))
+    application.configure({"location": {"states": "OR, WA", "cities": "Portland",
+                                        "allow_remote": False, "allow_hybrid": True},
+                           "max_age_days": 14})
+    policy = application.settings.location
+    assert policy.allowed_states == ["OR", "WA"]
+    assert policy.allowed_cities == ["portland"]
+    assert policy.allow_remote is False and policy.allow_hybrid is True
+    assert application.settings.max_age_days == 14
+
+    # And it takes effect on the board immediately, with no run.
+    payload = application.board_payload()
+    assert payload["location"]["states"] == ["OR", "WA"]
+
+
+def test_the_saved_cache_is_opt_in(tmp_path):
+    """Without it, a run gets its own folder — no inherited employers or history."""
+    application = App(Settings(applications_dir=tmp_path, data_dir=tmp_path / "state",
+                               backend="mock"))
+    assert application.use_saved is False
+
+    fresh = application.run_settings()
+    assert fresh.data_dir != application.settings.data_dir
+    assert "runs" in str(fresh.data_dir)
+
+    application.configure({"use_saved": True})
+    assert application.run_settings().data_dir == application.settings.data_dir
+
+
+def test_settings_are_only_written_when_you_ask(tmp_path):
+    application = App(Settings(applications_dir=tmp_path, data_dir=tmp_path / "state",
+                               backend="mock"))
+    application.configure({"location": {"states": "OR"}})
+    assert not (tmp_path / "state" / "location.json").exists()
+
+    application.configure({"location": {"states": "OR"}, "remember": True})
+    assert (tmp_path / "state" / "location.json").exists()

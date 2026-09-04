@@ -127,6 +127,30 @@
   .pending-note { color: var(--dim); font-style: italic; margin: 10px 0 4px; }
   .tag.excluded { color: var(--bad); border-color: #4a2020; background: #200f0f; }
 
+  .card.setup { border-color: #2f3d55; }
+  .hint { font-size: 11.5px; color: var(--dim); line-height: 1.5; margin: 0 0 9px; }
+  .row { display: flex; gap: 6px; }
+  .row input { flex: 1; min-width: 0; }
+  .status { font-size: 11.5px; color: var(--muted); margin-top: 7px; line-height: 1.45; }
+  .status.good { color: var(--good); }
+  .status.bad { color: var(--bad); }
+
+  .modal { position: fixed; inset: 0; z-index: 50; background: rgba(5,7,11,.72);
+           display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .modal-box { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+               width: min(620px, 100%); max-height: 80vh; display: flex; flex-direction: column;
+               padding: 18px 20px; }
+  .modal-box h2 { margin: 0 0 10px; font-size: 14px; }
+  .modal-path { font: 12px ui-monospace, Menlo, monospace; color: var(--muted);
+                background: var(--panel-2); border: 1px solid var(--line);
+                border-radius: 8px; padding: 7px 10px; overflow-x: auto; white-space: nowrap; }
+  .modal-list { flex: 1; overflow: auto; margin: 10px 0; min-height: 140px; }
+  .modal-list button { display: block; width: 100%; text-align: left; background: none;
+                       border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+                       padding: 7px 4px; color: var(--text); }
+  .modal-list button:hover { background: var(--panel-2); }
+  .modal-actions { display: flex; gap: 8px; align-items: center; }
+
   .empty { text-align: center; padding: 60px 20px; color: var(--muted); }
   .empty h3 { color: var(--text); margin: 0 0 8px; }
 
@@ -155,6 +179,40 @@
 
 <div class="layout">
   <aside>
+    <div class="card setup" id="setup-card">
+      <h2>1 · Your applications</h2>
+      <p class="hint">The folder holding applications you have already written —
+         one sub-folder per company works best. It is read, never copied or sent
+         anywhere but the model you configured.</p>
+      <div class="row">
+        <input type="text" id="apps-path" placeholder="~/somewhere/job applications">
+        <button id="apps-browse">Browse</button>
+      </div>
+      <div id="apps-status" class="status"></div>
+
+      <h2 style="margin-top:16px">2 · Where you will work</h2>
+      <div class="two">
+        <label class="field">States
+          <input type="text" id="loc-states" placeholder="NM, CO"></label>
+        <label class="field">Max age
+          <input type="text" id="loc-age" placeholder="30" inputmode="numeric"></label>
+      </div>
+      <label class="field">Cities / metros
+        <input type="text" id="loc-cities" placeholder="Albuquerque, Santa Fe"></label>
+      <label class="field inline"><input type="checkbox" id="loc-remote"> Fully remote roles count</label>
+      <label class="field inline"><input type="checkbox" id="loc-hybrid"> Hybrid outside those places counts</label>
+      <p class="hint" id="loc-origin"></p>
+
+      <h2 style="margin-top:16px">3 · Saved data</h2>
+      <label class="field inline"><input type="checkbox" id="use-saved">
+        Reuse saved employers, profile &amp; history</label>
+      <p class="hint" id="saved-hint"></p>
+      <label class="field inline"><input type="checkbox" id="remember">
+        Remember these settings for next time</label>
+      <button id="setup-save" class="primary" style="width:100%;margin-top:8px">Save setup</button>
+      <div id="setup-error" class="status bad"></div>
+    </div>
+
     <div class="card">
       <h2>Your board</h2>
       <div class="stat-grid" id="stats"></div>
@@ -253,6 +311,21 @@
   </main>
 </div>
 
+<div id="browser" class="modal" hidden>
+  <div class="modal-box">
+    <h2>Choose your applications folder</h2>
+    <div class="modal-path" id="browse-path"></div>
+    <div class="modal-list" id="browse-list"></div>
+    <div class="status" id="browse-note"></div>
+    <div class="modal-actions">
+      <button id="browse-up">↑ Up</button>
+      <div class="spacer"></div>
+      <button id="browse-cancel">Cancel</button>
+      <button class="primary" id="browse-pick">Use this folder</button>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 let STATE = null;
@@ -310,9 +383,81 @@ function render() {
         </div>`; }).join("")
     : "<i>none yet — hit Run scout</i>";
 
+  renderSetup(s);
   renderRequirements(s.requirements);
   renderRoles();
   renderRun(s.run);
+}
+
+function renderSetup(s) {
+  if (document.activeElement !== $("apps-path")) $("apps-path").value = s.applications_dir || "";
+  const info = s.applications || {};
+  const el = $("apps-status");
+  el.className = "status " + (info.ok ? "good" : (s.applications_dir ? "bad" : ""));
+  el.textContent = s.applications_dir
+    ? (info.note || "") : "No folder chosen yet — pick one to get started.";
+
+  const loc = s.location;
+  if (document.activeElement !== $("loc-states")) $("loc-states").value = (loc.states || []).join(", ");
+  if (document.activeElement !== $("loc-cities")) $("loc-cities").value = (loc.cities || []).join(", ");
+  if (document.activeElement !== $("loc-age")) $("loc-age").value = loc.max_age_days;
+  $("loc-remote").checked = !!loc.remote;
+  $("loc-hybrid").checked = !!loc.hybrid;
+
+  $("loc-origin").textContent = (loc.states || []).length || (loc.cities || []).length
+    ? `Pre-filled from ${s.data_dir}/location.json. Edit freely — nothing is written back unless you tick "Remember".`
+    : "Nothing saved yet. Leave both blank and only fully-remote roles can qualify.";
+
+  $("use-saved").checked = !!s.use_saved;
+  $("saved-hint").textContent = s.use_saved
+    ? `Using ${s.data_dir} — employers already found are reused and you will not be shown a role twice.`
+    : `Off: this run gets its own folder under ${s.data_dir}/runs, with a fresh profile, a fresh employer list and no memory of what you have seen.`;
+
+  $("setup-card").querySelector("h2").textContent =
+    s.configured ? "1 · Your applications ✓" : "1 · Your applications";
+}
+
+async function saveSetup() {
+  const res = await api("/api/configure", "POST", {
+    applications_dir: $("apps-path").value.trim(),
+    use_saved: $("use-saved").checked,
+    remember: $("remember").checked,
+    max_age_days: $("loc-age").value.trim() || null,
+    location: {
+      states: $("loc-states").value,
+      cities: $("loc-cities").value,
+      allow_remote: $("loc-remote").checked,
+      allow_hybrid: $("loc-hybrid").checked,
+    },
+  });
+  $("setup-error").textContent = res.ok ? "" : (res.error || "could not save");
+  await load();
+}
+
+// --- folder browser --------------------------------------------------------
+let browsePath = "";
+
+async function openBrowser(start) {
+  $("browser").hidden = false;
+  await showFolder(start || $("apps-path").value.trim() || "~");
+}
+
+async function showFolder(path) {
+  const data = await api("/api/browse?path=" + encodeURIComponent(path));
+  browsePath = data.path || path;
+  $("browse-path").textContent = browsePath;
+  const info = data.inspection || {};
+  const note = $("browse-note");
+  note.className = "status " + (info.ok ? "good" : "");
+  note.textContent = data.error || info.note || "";
+  $("browse-list").innerHTML = (data.entries || []).length
+    ? data.entries.map((e) =>
+        `<button data-path="${esc(e.path)}">${esc(e.name)}</button>`).join("")
+    : "<div class='hint' style='padding:10px 4px'>No sub-folders here.</div>";
+  $("browse-list").querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", () => showFolder(b.dataset.path)));
+  $("browse-up").dataset.path = data.parent || "";
+  $("browse-up").disabled = !data.parent;
 }
 
 function renderRequirements(r) {
@@ -385,8 +530,10 @@ function renderRoles() {
 
   if (!roles.length) {
     $("roles").innerHTML = `<div class="empty"><h3>Nothing here yet</h3>
-      <p>${STATE.roles.length ? "No role matches this filter." :
-        "Hit <b>Run scout</b> — it will propose employers, find their job boards, read them, and rank what survives."}</p></div>`;
+      <p>${!STATE.configured
+          ? "Start by choosing the folder that holds your existing applications, over on the left."
+          : STATE.roles.length ? "No role matches this filter."
+          : "Hit <b>Run scout</b> — it will propose employers, find their job boards, read them, and rank what survives."}</p></div>`;
     return;
   }
 
@@ -468,8 +615,10 @@ function renderRun(run) {
     runStartedAt = null;
     chip.innerHTML = `<span class="dot"></span>${run.finished_at ? "finished " + run.finished_at : "idle"}`;
   }
-  $("btn-run").disabled = run.running;
-  $("btn-expand").disabled = run.running;
+  const ready = STATE && STATE.configured;
+  $("btn-run").disabled = run.running || !ready;
+  $("btn-expand").disabled = run.running || !ready;
+  $("btn-run").title = ready ? "" : "Choose your applications folder first";
 
   const panel = $("run-panel");
   if (run.log.length) {
@@ -507,6 +656,16 @@ async function pushWeights() {
 ["w-fit", "w-lik", "w-rec", "w-hl"].forEach((id) => $(id).addEventListener("change", pushWeights));
 ["f-status", "f-mode", "f-showfiltered"].forEach((id) => $(id).addEventListener("change", renderRoles));
 $("r-save").addEventListener("click", saveRequirements);
+$("setup-save").addEventListener("click", saveSetup);
+$("use-saved").addEventListener("change", saveSetup);
+$("apps-browse").addEventListener("click", () => openBrowser());
+$("browse-up").addEventListener("click", (e) => showFolder(e.target.dataset.path));
+$("browse-cancel").addEventListener("click", () => { $("browser").hidden = true; });
+$("browse-pick").addEventListener("click", async () => {
+  $("apps-path").value = browsePath;
+  $("browser").hidden = true;
+  await saveSetup();
+});
 $("f-text").addEventListener("input", renderRoles);
 $("btn-run").addEventListener("click", async () => { await api("/api/run", "POST", {}); await load(); });
 $("btn-expand").addEventListener("click", async () => { await api("/api/run", "POST", { expand: true }); await load(); });
