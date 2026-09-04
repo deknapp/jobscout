@@ -183,21 +183,24 @@ Robert Half, TEKsystems, Insight Global and the rest of the aggregator,
 staffing-mill and SEO-farm layer. An unrecognised host is rejected as well, not
 merely flagged.
 
-## Never recommending the same thing twice
+## Only your own decisions hide a job
 
-Every posting the pipeline *evaluates* goes into an append-only history file, not
-just the ones it recommends — so a later run neither repeats a recommendation nor
-pays to re-check a rejection. Rejections come in two kinds:
+Every posting the pipeline evaluates is logged, but **the log does not filter
+anything**. Exactly two things take a role off your board:
 
-* **permanent** (wrong state, too old, employer excluded) — suppressed forever
-* **transient** (a page that wouldn't load) — retried after two days
+* you **applied** to it, or you **dismissed** it
+* the employer already appears in your applications folder — you applied there
 
-That distinction earns its keep. An early run's verification step fetched a
-JavaScript job board, got an empty shell, and recorded a perfectly good role as
-"not verified" — a rejection that said something about our fetch, not about the
-job. `jobscout history --retry` takes back every soft rejection so they are
-reconsidered, which is the right move whenever the cause was a bug rather than
-the job.
+That is the whole rule, and it replaced something much cleverer. The earlier
+design suppressed anything it had shown you once, plus "permanent" rejections,
+plus transient ones for a couple of days. In practice it withheld jobs from
+someone trying to find one, for reasons they never saw and could not undo — and
+worst of all it treated *too old* as permanent, so a role dropped at a 14-day
+limit stayed buried even after the limit was raised to 30. A threshold you can
+change must never bury anything.
+
+A role shown yesterday and not applied to is still a role worth applying to, so
+it stays.
 
 Roles that were verified and in-location but simply didn't fit in this run's
 report are *deliberately not recorded*, so tomorrow's run can still surface them.
@@ -403,11 +406,11 @@ run and a thorough one:
 
 | Setting | Default | What it costs |
 |---|---:|---|
-| `JOBSCOUT_MAX_RESOLVE_PER_RUN` | 10 | one cheap web-search call per new employer, once ever |
-| `JOBSCOUT_MAX_SCANS_PER_RUN` | 12 | **free** for an ATS board; one cheap call only for boards with no API |
+| `JOBSCOUT_MAX_RESOLVE_PER_RUN` | 20 | one cheap web-search call per new employer, once ever |
+| `JOBSCOUT_MAX_SCANS_PER_RUN` | 8 | **agent scans only** — boards with an API are read every run, uncapped |
 | `JOBSCOUT_MAX_VERIFY_PER_RUN` | 20 | one cheap fetch per surviving posting |
-| `JOBSCOUT_COMPANY_TARGET` | 30 | one strong call when the registry is short |
-| `JOBSCOUT_RESCAN_AFTER_DAYS` | 3 | how often a known board is re-read |
+| `JOBSCOUT_COMPANY_TARGET` | 80 | one strong call when the registry is short |
+| `JOBSCOUT_RESCAN_AFTER_DAYS` | 3 | how often a **slow** board is re-read; API boards ignore this |
 
 Ranking weights are free to change — they operate on scores already stored:
 

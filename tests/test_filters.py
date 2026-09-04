@@ -89,27 +89,41 @@ def test_dedupe_collapses_the_same_role_from_two_searches():
     assert len(dedupe(postings)) == 2
 
 
-def test_a_soft_rejection_can_be_taken_back():
-    """A rejection caused by our own broken fetch must not bury a real job."""
+def test_only_your_own_decisions_hide_a_job():
+    """Nothing else may withhold a role from someone trying to find work.
+
+    Every other kind of rejection is a judgement made by this tool, often on a
+    threshold the user can change, and it is still logged — but it never again
+    silently removes a job from view.
+    """
     import tempfile
     from pathlib import Path
 
-    from jobscout.history import DROPPED, History, RECOMMENDED
+    from jobscout.history import APPLIED, DISMISSED, DROPPED, History, RECOMMENDED
 
     path = Path(tempfile.mkdtemp()) / "history.jsonl"
     history = History(path)
-    good = Posting(company="Iambic", title="Software Engineer",
-                   url="https://jobs.ashbyhq.com/iambic/1")
-    stale = Posting(company="Iambic", title="Medical Writer",
-                    url="https://jobs.ashbyhq.com/iambic/2")
-    kept = Posting(company="Iambic", title="ML Scientist",
-                   url="https://jobs.ashbyhq.com/iambic/3")
-    history.record(good, DROPPED, "not verified")          # our fault: soft
-    history.record(stale, DROPPED, "posted 78 days ago")   # the job's: permanent
-    history.record(kept, RECOMMENDED)
 
-    assert history.forget_transient() == 1
+    shown = Posting(company="Iambic", title="Software Engineer",
+                    url="https://jobs.ashbyhq.com/iambic/1")
+    stale = Posting(company="Iambic", title="ML Scientist",
+                    url="https://jobs.ashbyhq.com/iambic/2")
+    unchecked = Posting(company="Iambic", title="Platform Engineer",
+                        url="https://jobs.ashbyhq.com/iambic/3")
+    applied = Posting(company="Iambic", title="Research Engineer",
+                      url="https://jobs.ashbyhq.com/iambic/4")
+    dismissed = Posting(company="Iambic", title="Medical Writer",
+                        url="https://jobs.ashbyhq.com/iambic/5")
+
+    history.record(shown, RECOMMENDED)
+    history.record(stale, DROPPED, "posted 78 days ago (limit 30)")
+    history.record(unchecked, DROPPED, "not verified")
+    history.record(applied, APPLIED)
+    history.record(dismissed, DISMISSED)
+
     reloaded = History(path)
-    assert not reloaded.seen_before(good)[0]        # reconsidered
-    assert reloaded.seen_before(stale)[0]           # still ruled out
-    assert reloaded.seen_before(kept)[0]            # still recommended
+    assert not reloaded.seen_before(shown)[0]      # shown once is not "dealt with"
+    assert not reloaded.seen_before(stale)[0]      # you can raise the age limit
+    assert not reloaded.seen_before(unchecked)[0]  # our failure, not the job's
+    assert reloaded.seen_before(applied)[0]        # you applied
+    assert reloaded.seen_before(dismissed)[0]      # you said no

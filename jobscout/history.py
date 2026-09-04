@@ -32,16 +32,30 @@ DROPPED = "dropped"
 #: a worse error than re-checking it tomorrow, and re-checking is cheap.
 TRANSIENT_SUPPRESSION_DAYS = 2
 
-#: Rejection reasons that will never change on their own.
+#: Rejection reasons that will never change on their own — facts about the job.
 PERMANENT_PREFIXES = (
-    "location", "remote but restricted", "hybrid", "posted ",
+    "location", "remote but restricted", "hybrid",
     "no location stated", "excluded", "already applied", "listing is closed",
 )
+
+#: Reasons that depend on a SETTING rather than on the job. A role dropped for
+#: being 21 days old was dropped by a number you chose and can change, so it
+#: must never be suppressed — raise the limit and it has to come back. Getting
+#: this wrong quietly buries good jobs behind a threshold you have since moved.
+THRESHOLD_PREFIXES = ("posted ", "no post date", "below the report cut",
+                      "excluded because you asked", "unknown, kept")
 
 
 def is_permanent(reason: str) -> bool:
     lowered = (reason or "").lower()
+    if is_threshold(lowered):
+        return False
     return any(lowered.startswith(prefix) for prefix in PERMANENT_PREFIXES)
+
+
+def is_threshold(reason: str) -> bool:
+    lowered = (reason or "").lower()
+    return any(lowered.startswith(prefix) for prefix in THRESHOLD_PREFIXES)
 
 
 @dataclass
@@ -69,15 +83,17 @@ class Entry:
         return cls(**{k: v for k, v in data.items() if k in fields})
 
     def suppresses(self, today: dt.date) -> bool:
-        """Should this entry keep the posting out of a new run?"""
-        if self.status in (RECOMMENDED, APPLIED, DISMISSED):
-            return True
-        if self.permanent:
-            return True
-        seen = _parse(self.last_seen) or _parse(self.first_seen)
-        if seen is None:
-            return False
-        return (today - seen).days < TRANSIENT_SUPPRESSION_DAYS
+        """Should this entry keep the posting out of a new run?
+
+        Only if YOU acted on it. Nothing else.
+
+        This used to be cleverer — permanent versus transient rejections,
+        suppression windows, "already recommended". All of it added up to a tool
+        that quietly withheld jobs from someone trying to find one, for reasons
+        they never saw and could not undo. A role you have not applied to is a
+        role you might still apply to, so it stays on the board.
+        """
+        return self.status in (APPLIED, DISMISSED)
 
 
 def _parse(value: str) -> Optional[dt.date]:
@@ -155,19 +171,14 @@ class History:
 
     def seen_before(self, posting: Posting,
                     today: Optional[dt.date] = None) -> Tuple[bool, str]:
+        """Only your own decisions hide a role. Everything else is just logged."""
         entry = self.find(posting)
-        if entry is None:
+        if entry is None or not entry.suppresses(today or dt.date.today()):
             return False, ""
-        today = today or dt.date.today()
-        if not entry.suppresses(today):
-            return False, ""
+        when = entry.last_seen or entry.first_seen
         if entry.status == APPLIED:
-            return True, "you already applied to this (%s)" % (entry.last_seen or entry.first_seen)
-        if entry.status == DISMISSED:
-            return True, "you dismissed this on %s" % (entry.last_seen or entry.first_seen)
-        if entry.status == RECOMMENDED:
-            return True, "already recommended on %s" % (entry.first_seen or "a previous run")
-        return True, "already ruled out: %s" % (entry.reason or "no reason recorded")
+            return True, "you already applied to this (%s)" % when
+        return True, "you dismissed this on %s" % when
 
     # --- writes ------------------------------------------------------------
     def record(self, posting: Posting, status: str, reason: str = "",
@@ -216,13 +227,8 @@ class History:
         return entry
 
     def forget_transient(self) -> int:
-        """Drop every soft rejection, so they are reconsidered on the next run.
-
-        For when a rejection reflects a bug that has since been fixed rather
-        than anything about the job — `jobscout history --retry`.
-        """
-        keep = [e for e in self.entries
-                if not (e.status == DROPPED and not e.permanent)]
+        """Drop every logged rejection so nothing lingers. Kept for `--retry`."""
+        keep = [e for e in self.entries if e.status != DROPPED]
         removed = len(self.entries) - len(keep)
         if removed:
             self.entries = keep

@@ -141,14 +141,17 @@ class Settings:
     max_age_days: int = 30
     #: How many roles a report shows.
     max_results: int = 10
-    #: How many employers the registry should hold before it stops proposing more.
-    company_target: int = 30
+    #: How many employers the registry should hold before it stops proposing
+    #: more. The registry IS the search surface — thirty employers is a narrow
+    #: search, and boards with an API cost nothing to read, so this is generous.
+    company_target: int = 80
     #: How many employers to propose in one go when the registry is short.
-    propose_batch: int = 20
+    propose_batch: int = 25
     #: Per-run work caps — every one of these is a billed model call, so they are
     #: the dial between "cheap run" and "thorough run".
-    max_resolve_per_run: int = 10
-    max_scans_per_run: int = 12
+    max_resolve_per_run: int = 20
+    #: Applies ONLY to boards with no API. Boards with one are read every run.
+    max_scans_per_run: int = 8
     max_verify_per_run: int = 20
     #: Do not re-read an employer's board more often than this.
     rescan_after_days: int = 3
@@ -368,10 +371,10 @@ def load_settings(require_applications: bool = True) -> Settings:
         model_strong=_env("JOBSCOUT_MODEL_STRONG", "claude-opus-5"),
         max_age_days=_env_int("JOBSCOUT_MAX_AGE_DAYS", 30),
         max_results=_env_int("JOBSCOUT_MAX_RESULTS", 10),
-        company_target=_env_int("JOBSCOUT_COMPANY_TARGET", 30),
-        propose_batch=_env_int("JOBSCOUT_PROPOSE_BATCH", 20),
-        max_resolve_per_run=_env_int("JOBSCOUT_MAX_RESOLVE_PER_RUN", 10),
-        max_scans_per_run=_env_int("JOBSCOUT_MAX_SCANS_PER_RUN", 12),
+        company_target=_env_int("JOBSCOUT_COMPANY_TARGET", 80),
+        propose_batch=_env_int("JOBSCOUT_PROPOSE_BATCH", 25),
+        max_resolve_per_run=_env_int("JOBSCOUT_MAX_RESOLVE_PER_RUN", 20),
+        max_scans_per_run=_env_int("JOBSCOUT_MAX_SCANS_PER_RUN", 8),
         max_verify_per_run=_env_int("JOBSCOUT_MAX_VERIFY_PER_RUN", 20),
         rescan_after_days=_env_int("JOBSCOUT_RESCAN_AFTER_DAYS", 3),
         max_postings_per_company=_env_int("JOBSCOUT_MAX_POSTINGS_PER_COMPANY", 25),

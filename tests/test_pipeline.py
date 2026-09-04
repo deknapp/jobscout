@@ -152,16 +152,26 @@ def test_the_report_carries_the_verified_details(settings):
     assert "Untrusted source" in text
 
 
-def test_a_second_run_does_not_repeat_itself(settings):
-    first = pipeline.find(settings, today=TODAY)
-    assert first.recommended
+def test_a_role_you_have_not_acted_on_keeps_being_offered(settings):
+    """The opposite of the old behaviour, and deliberately so.
 
-    # Boards are normally not re-read for a few days; force a re-read so this
-    # tests the history, not the rescan interval.
-    settings.rescan_after_days = 0
+    A role shown yesterday and not applied to is still a role worth applying to.
+    Only marking it applied or dismissed takes it out of circulation.
+    """
+    from jobscout.history import APPLIED, History
+
+    first = pipeline.find(settings, today=TODAY)
+    assert len(first.recommended) == 2
+
     second = pipeline.find(settings, today=TODAY + dt.timedelta(days=1))
-    assert second.recommended == []
-    assert second.stats.get("dropped_seen", 0) >= 2
+    assert len(second.recommended) == 2, "showing it once is not dealing with it"
+
+    history = History(settings.history_path)
+    history.mark(first.recommended[0].id, APPLIED)
+
+    third = pipeline.find(settings, today=TODAY + dt.timedelta(days=2))
+    assert len(third.recommended) == 1
+    assert third.stats.get("dropped_seen") == 1
 
 
 def test_the_employer_registry_persists_between_runs(settings):
@@ -240,3 +250,33 @@ def test_roles_are_published_as_each_employer_is_read(settings, monkeypatch):
     assert stages[0] == "found"
     assert "scored" in stages
     assert stages.index("found") < stages.index("scored")
+
+
+def test_free_boards_are_read_every_run_and_never_capped(settings, monkeypatch):
+    """Capping free, instant board reads only means missing jobs."""
+    from jobscout.companies import Company, RESOLVED, Registry
+    from jobscout.fetchers import FetchResult
+
+    registry = Registry(settings.companies_path)
+    for index in range(25):
+        registry.add(Company(name="ATS Employer %d" % index, status=RESOLVED,
+                             careers_url="https://boards.greenhouse.io/e%d" % index,
+                             last_scanned=TODAY.isoformat()))   # scanned today
+    for index in range(5):
+        registry.add(Company(name="Slow Employer %d" % index, status=RESOLVED,
+                             careers_url="https://careers.slow%d.com/jobs" % index))
+    registry.save()
+
+    read = []
+    monkeypatch.setattr(
+        fetchers, "fetch",
+        lambda company, url, context=None: (
+            read.append(company) or FetchResult(postings=[], ats="Greenhouse"))
+        if "greenhouse" in url else None)
+
+    settings.max_scans_per_run = 2      # applies to the slow ones only
+    settings.company_target = 0         # do not propose more
+    pipeline.find(settings, today=TODAY)
+
+    # All 25 API boards read despite being scanned today and despite the cap.
+    assert len(read) == 25

@@ -301,12 +301,26 @@ def scan_boards(settings: Settings, llm: LLM, registry: Registry,
                 profile: Dict[str, Any],
                 on_company: Optional[Callable[[Any, List[Posting]], None]] = None
                 ) -> Tuple[List[Posting], List[str], Dict[str, int]]:
-    """Read the boards we know about and collect what is on them."""
-    targets = registry.scannable(settings.rescan_after_days)[:settings.max_scans_per_run]
+    """Read the boards we know about and collect what is on them.
+
+    Boards with an API are read EVERY run and are never capped: they are free
+    and take under a second, so throttling them only means missing jobs. The cap
+    and the rescan interval apply solely to the slow agent-driven scans.
+    """
+    everything = registry.active()
+    api_boards = [c for c in everything
+                  if c.careers_url and fetchers.supports(c.careers_url)]
+    agent_boards = [c for c in registry.scannable(settings.rescan_after_days)
+                    if c.careers_url and not fetchers.supports(c.careers_url)]
+    targets = api_boards + agent_boards[:settings.max_scans_per_run]
     stats: Dict[str, int] = {}
     if not targets:
         return [], [], stats
-    _log("reading %d job board(s)…" % len(targets))
+    _log("reading %d job board(s) — %d free via an ATS API, %d slower agent scan(s)%s"
+         % (len(targets), len(api_boards), min(len(agent_boards), settings.max_scans_per_run),
+            "" if len(agent_boards) <= settings.max_scans_per_run
+            else " (%d more agent board(s) left for next run)"
+                 % (len(agent_boards) - settings.max_scans_per_run)))
     postings: List[Posting] = []
     errors: List[str] = []
     narrowed_total = 0
@@ -331,6 +345,7 @@ def scan_boards(settings: Settings, llm: LLM, registry: Registry,
     registry.save()
     stats["boards_read"] = len(targets)
     stats["boards_via_api"] = via_api
+    stats["boards_skipped_slow"] = max(0, len(agent_boards) - settings.max_scans_per_run)
     stats["narrowed_at_source"] = narrowed_total
     _log("found %d relevant posting(s) across %d board(s) (%d read directly via "
          "an ATS API; %d off-location or off-target roles skipped for free)"
@@ -410,7 +425,11 @@ def prefilter(postings: Sequence[Posting], settings: Settings, history: History,
             posting.summary = (posting.summary + "\n\n" + why).strip() \
                 if posting.summary else why
         if posting.company_key in applied_keys:
-            posting.concerns = "you have already applied to this employer"
+            # The one thing worth skipping: you have already applied here, and
+            # the evidence is sitting in your applications folder.
+            _drop(posting, "you already applied to this employer",
+                  dropped, stats, "dropped_already_applied")
+            continue
         kept.append(posting)
 
     stats["survived_prefilter"] = len(kept)
