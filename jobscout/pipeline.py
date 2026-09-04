@@ -165,7 +165,10 @@ def _scan_one(settings: Settings, llm: LLM, company: Company,
     so the free location filter and a title-overlap trim run here, before the
     postings reach anything that costs money.
     """
-    direct = fetchers.fetch(company.name, company.careers_url)
+    titles = list(profile.get("target_titles") or []) + \
+        list(profile.get("adjacent_titles") or [])
+    direct = fetchers.fetch(company.name, company.careers_url,
+                            context={"titles": titles})
     if direct is not None and direct.ok:
         raw = direct.postings
         in_area = []

@@ -110,7 +110,8 @@ def settings(tmp_path, monkeypatch):
         classmethod(lambda cls, s: LLM(backend, model_cheap="m", model_strong="M")))
     # No test touches the network: pretend this host has no ATS API, which
     # exercises the agent-driven fallback path.
-    monkeypatch.setattr(fetchers, "fetch", lambda company, url: None)
+    monkeypatch.setattr(fetchers, "fetch",
+                        lambda company, url, context=None: None)
 
     return Settings(
         applications_dir=tmp_path / "apps",
@@ -200,7 +201,8 @@ def test_roles_from_a_board_api_are_not_re_verified(settings, monkeypatch):
     ]
     monkeypatch.setattr(
         fetchers, "fetch",
-        lambda company, url: FetchResult(postings=list(api_roles), ats="Greenhouse"))
+        lambda company, url, context=None: FetchResult(postings=list(api_roles),
+                                                       ats="Greenhouse"))
 
     result = pipeline.find(settings, today=TODAY)
 

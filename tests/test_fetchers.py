@@ -95,3 +95,61 @@ def test_a_broken_api_reports_instead_of_raising(monkeypatch):
     result = fetchers.fetch("Acme", "https://jobs.lever.co/acme")
     assert result is not None and not result.ok
     assert "unreachable" in result.note
+
+
+# --- Workday ---------------------------------------------------------------
+
+WORKDAY_SEARCH = {"total": 2, "jobPostings": [
+    {"title": "Senior Data Engineer", "locationsText": "Albuquerque, NM",
+     "externalPath": "/job/Albuquerque-NM/Senior-Data-Engineer_R-1",
+     "postedOn": "Posted 4 Days Ago"},
+    {"title": "Software Engineer", "locationsText": "3 Locations",
+     "externalPath": "/job/Elsewhere/Software-Engineer_R-2",
+     "postedOn": "Posted 30+ Days Ago"},
+]}
+
+WORKDAY_DETAIL = {"jobPostingInfo": {
+    "title": "Software Engineer",
+    "location": "Los Alamos, NM",
+    "additionalLocations": ["Denver, CO"],
+    "startDate": "2026-08-29",
+    "externalUrl": "https://acme.wd5.myworkdayjobs.com/en-US/Careers/job/x",
+    "jobDescription": "<p>Build things.</p>",
+}}
+
+
+def test_workday_urls_are_parsed_into_a_cxs_endpoint():
+    from jobscout.fetchers import _workday_parts
+
+    assert _workday_parts("https://leidos.wd5.myworkdayjobs.com/External") == (
+        "leidos.wd5.myworkdayjobs.com", "leidos", "External")
+    # The locale segment is not the site name.
+    assert _workday_parts("https://acme.wd1.myworkdayjobs.com/en-US/Careers/job/1")[2] == "Careers"
+
+
+@pytest.mark.parametrize("text,days_ago", [
+    ("Posted Today", 0), ("Posted Yesterday", 1), ("Posted 12 Days Ago", 12),
+    ("Posted 30+ Days Ago", 31), ("Posted 2 Months Ago", 60),
+    ("Posted 1 Year Ago", 365),
+])
+def test_workday_relative_dates_become_real_ones(text, days_ago):
+    from jobscout.fetchers import _relative_date
+
+    today = dt.date(2026, 9, 4)
+    assert _relative_date(text, today) == (today - dt.timedelta(days=days_ago)).isoformat()
+
+
+def test_workday_resolves_a_multi_location_posting(monkeypatch):
+    """"3 Locations" can be hiding the only location that matters."""
+    monkeypatch.setattr(fetchers, "_post_json", lambda url, body: WORKDAY_SEARCH)
+    monkeypatch.setattr(fetchers, "_get_json", lambda url: WORKDAY_DETAIL)
+
+    result = fetchers.fetch("Acme", "https://acme.wd5.myworkdayjobs.com/Careers",
+                            context={"titles": ["Data Engineer"]})
+    by_title = {p.title: p for p in result.postings}
+
+    assert by_title["Senior Data Engineer"].location == "Albuquerque, NM"
+    resolved = by_title["Software Engineer"]
+    assert "Los Alamos, NM" in resolved.location
+    assert resolved.posted == "2026-08-29"      # the real date beats "30+ days"
+    assert "Build things" in resolved.summary

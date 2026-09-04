@@ -74,7 +74,17 @@ Lever            api.lever.co/v0/postings/<slug>?mode=json
 Ashby            api.ashbyhq.com/posting-api/job-board/<slug>
 SmartRecruiters  api.smartrecruiters.com/v1/companies/<slug>/postings
 Workable         apply.workable.com/api/v1/widget/accounts/<slug>
+Workday          <tenant>.<dc>.myworkdayjobs.com/wday/cxs/<tenant>/<site>/jobs
 ```
+
+Workday needs a little more care, and gets it. Its boards run to thousands of
+roles, so jobscout drives the board's own search with your target titles rather
+than paging the whole thing. It reports dates as "Posted 30+ Days Ago", which are
+converted to real dates — and "30+" resolves to 31, deliberately just past the
+default freshness limit, because a board that has stopped counting is telling you
+something. And when it collapses a role's location to "3 Locations", jobscout
+opens that role individually, since one of those three could be the only one that
+matters to you.
 
 So jobscout asks the API instead. This is better in every direction that
 matters. It is free and instant. It returns the **complete** board rather than
