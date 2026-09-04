@@ -1,6 +1,6 @@
 """The command line.
 
-    jobscout init --applications "~/path/to/your applications" --states NM
+    jobscout init --applications "~/path/to/your applications" --states XX
     jobscout status
     jobscout profile [--refresh]
     jobscout companies [--add NAME] [--ignore NAME] [--forget NAME]
@@ -387,8 +387,8 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--applications", help="folder holding your existing applications")
     init.add_argument("--data-dir", default=str(DEFAULT_DATA_DIR),
                       help="where jobscout keeps its state (default: %s)" % redact(DEFAULT_DATA_DIR))
-    init.add_argument("--states", default="", help="comma-separated state codes you will work in, e.g. NM")
-    init.add_argument("--cities", default="", help="comma-separated cities/metros, e.g. 'Albuquerque,Santa Fe'")
+    init.add_argument("--states", default="", help="two-letter state codes you would work in, comma separated")
+    init.add_argument("--cities", default="", help="cities/metros you would commute to, comma separated")
     init.add_argument("--no-remote", action="store_true", help="exclude fully remote roles")
     init.add_argument("--describe", default="", help="one line describing your location constraint")
     init.add_argument("--force", action="store_true", help="overwrite an existing .env")

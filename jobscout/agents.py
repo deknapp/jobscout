@@ -50,6 +50,13 @@ def _as_list(value: Any) -> List[str]:
 
 
 def _policy_block(policy: LocationPolicy) -> str:
+    """Describe the CONFIGURED policy.
+
+    Every place named here comes from the user's settings. Naming a specific
+    city or state anywhere in this module would steer the model toward it no
+    matter whose policy was loaded — which is the whole thing this tool is
+    supposed to get right. ``tests/test_privacy.py`` enforces that.
+    """
     lines = ["HARD LOCATION RULE (non-negotiable — a role that fails this is worthless):"]
     if policy.allowed_states:
         names = ", ".join(policy.allowed_states)
@@ -59,9 +66,10 @@ def _policy_block(policy: LocationPolicy) -> str:
                      % ", ".join(sorted(set(policy.allowed_cities))))
     if policy.allow_remote:
         lines.append("  * Fully remote roles are acceptable, BUT many 'remote' roles are "
-                     "fenced to states the candidate does not live in ('remote — must "
-                     "reside in California'). Those are NOT acceptable. Always report the "
-                     "posting's exact stated location text so the fence can be checked.")
+                     "silently fenced to a region the candidate does not live in "
+                     "('remote — must reside in <somewhere else>'). Those are NOT "
+                     "acceptable. Always report the posting's exact stated location "
+                     "text, verbatim, so the fence can be checked.")
     else:
         lines.append("  * Remote roles are NOT acceptable.")
     if not policy.allow_hybrid:
@@ -185,7 +193,7 @@ Return ONLY a JSON array:
   {
     "name": "exact legal or common name of the employer",
     "why": "one or two sentences tying THIS candidate's background to THIS employer",
-    "presence": "how they satisfy the location rule, e.g. 'HQ in Albuquerque, NM' or 'remote-first, hires across the US'",
+    "presence": "how they satisfy the location rule stated above — name the actual city/state, or say they are remote-first",
     "hiring_signal": "any evidence you saw that they are hiring, or '' if none"
   }
 ]

@@ -2,9 +2,12 @@
 
 Everything in this module is deterministic Python. The agents never get the last
 word on whether a job is in the right place or recent enough — they propose, this
-module disposes. That separation is the point: a model that decides Denver is
-"basically New Mexico", or that a 2023 posting is "still probably open", gets
-overruled here every time.
+module disposes. That separation is the point: a model that decides the next
+state over is "basically" where you live, or that a two-year-old posting is
+"still probably open", gets overruled here every time.
+
+Nothing about any particular place is written down here. The state table below
+is the complete list; which entries count is entirely a matter of configuration.
 """
 from __future__ import annotations
 

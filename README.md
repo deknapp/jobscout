@@ -143,20 +143,28 @@ $140–165k role passes a $150k minimum, because it can pay it.
 
 This is the part most job tools get wrong, so it is the part with the most tests.
 
-| Posting says | Verdict (policy: NM, remote OK) |
+| Posting says | Verdict (example policy: Oregon, remote OK) |
 |---|---|
-| `Albuquerque, NM` | ✅ in an accepted location |
-| `Santa Fe, NM (hybrid, 2 days in office)` | ✅ hybrid is fine *here* |
+| `Portland, OR` | ✅ in an accepted location |
+| `Eugene, OR (hybrid, 2 days in office)` | ✅ hybrid is fine *here* |
 | `Remote - US` | ✅ genuinely remote |
 | `Remote (must reside in California)` | ❌ remote in name only |
 | `Remote — open to candidates in TX and CO` | ❌ fenced to states you don't live in |
-| `Remote (US) — TX, CO and New Mexico` | ✅ the fence includes you |
+| `Remote (US) — TX, CO and Oregon` | ✅ the fence includes you |
 | `Hybrid - Austin, TX (3 days in office)` | ❌ you are not relocating |
-| `Denver, CO` | ❌ close, but no |
-| *(no location given)* | ❌ unknown ≠ acceptable |
+| `Vancouver, WA` | ❌ close, but no |
+| *(no location given)* | ❌ unknown ≠ acceptable — unless you say otherwise |
 
 The default is **reject**. A false accept costs you an afternoon writing an
 application you can't take; a false reject costs you one listing out of many.
+The unknown case is the one exception you can flip — see the tri-state filters
+above.
+
+Every place in that table comes from **your** configuration. No city or state is
+written into the code, including into the prompts the agents receive — a place
+named in a prompt steers the model toward it no matter whose policy is loaded,
+so `tests/test_privacy.py` fails the build if one appears anywhere in the source
+or in the shipped `.env.example`.
 
 The agents are told the rule too — an agent that knows the constraint wastes
 fewer searches — but they are never trusted to apply it. Every candidate is
@@ -357,8 +365,8 @@ of the thing before spending anything.
 ```bash
 # one-time setup: point it at your applications and state your constraint
 jobscout init --applications "~/path/to/your applications" \
-              --states NM \
-              --cities "Albuquerque,Santa Fe,Los Alamos,Rio Rancho,Las Cruces"
+              --states OR \
+              --cities "Portland,Eugene,Corvallis"      # your states, your cities
 
 jobscout status            # what it can read, and what the filters are set to
 jobscout filters           # show every filter, and what each does with "didn't say"

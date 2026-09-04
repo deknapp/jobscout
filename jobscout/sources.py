@@ -3,7 +3,7 @@
 The open web's job layer is mostly noise: scrapers that republish dead listings,
 staffing mills that post phantom roles to harvest resumes, and SEO farms that
 rank for every job title in every city. A tool that searches "jobs in
-Albuquerque" and reports what it finds is a machine for generating false hope.
+<city>" and reports what it finds is a machine for generating false hope.
 
 So jobscout only trusts postings that come from the employer:
 
@@ -13,7 +13,7 @@ So jobscout only trusts postings that come from the employer:
 * **the employer's own domain** — ``careers.acme.com``, matched against the
   company name so a lookalike domain does not sneak through.
 * **government, national-lab and university sites** — ``.gov``, ``.mil``,
-  ``.edu``, which matters a lot if you are job-hunting in New Mexico.
+  ``.edu``, which matter wherever public institutions are a big local employer.
 
 Everything else is dropped, by host, with a reason you can read in the report.
 """
@@ -165,7 +165,7 @@ def is_employer_host(host: str, company: str) -> bool:
     for token in tokens:
         if token in flat:
             return True
-    # Acronyms: "Los Alamos National Laboratory" -> "lanl". Built from the FULL
+    # Acronyms: "Pacific Northwest National Laboratory" -> "pnnl". Built from the FULL
     # name, since the acronym is exactly what the noise words contribute to, and
     # matched against whole domain labels so it cannot hit mid-word by accident.
     words = [w for w in re.split(r"[^a-z0-9]+", (company or "").lower())

@@ -1,6 +1,6 @@
 """The employer registry — the list the tool builds up about *you*, over time.
 
-Searching "jobs in New Mexico" is a bad way to find a job. Deciding which
+Searching "jobs in <your city>" is a bad way to find a job. Deciding which
 employers could plausibly want someone with your background, finding each one's
 real careers board once, and then reading those boards directly is a much better
 one — and it gets cheaper every run, because a company's Greenhouse URL is
@@ -33,7 +33,7 @@ class Company:
     why: str = ""
     careers_url: str = ""
     ats: str = ""
-    presence: str = ""            # e.g. "Albuquerque, NM" or "remote-first"
+    presence: str = ""            # how they satisfy the location policy
     status: str = NEW
     added: str = ""
     last_resolved: str = ""

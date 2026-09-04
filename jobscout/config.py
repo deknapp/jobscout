@@ -97,7 +97,7 @@ class LocationPolicy:
     #: Does a fully-remote role qualify regardless of where the company sits?
     allow_remote: bool = True
     #: A remote role is still rejected if it is fenced to a region that is not ours,
-    #: e.g. "Remote (must reside in California)". These are the regions we DO accept
+    #: e.g. "Remote (must reside in <some other state>)". These are the regions we accept
     #: such a fence to name; empty means "only our allowed states/cities".
     remote_allowed_regions: List[str] = field(default_factory=list)
     #: Reject hybrid roles, which require living near the office.

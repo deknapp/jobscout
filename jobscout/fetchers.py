@@ -265,8 +265,8 @@ def fetch_workable(company: str, url: str, context: Dict[str, Any]) -> FetchResu
 _LOCALE = re.compile(r"^[a-z]{2}([-_][A-Za-z]{2})?$")
 
 #: Workday lists a role's location as "3 Locations" when it spans several. Those
-#: have to be resolved individually or a New Mexico posting hides behind the
-#: summary — but each is a request, so the number is capped.
+#: have to be resolved individually or the one location you can actually take
+#: hides behind the summary — but each is a request, so the number is capped.
 WORKDAY_DETAIL_LOOKUPS = 30
 WORKDAY_PAGE = 20
 WORKDAY_PAGES_PER_QUERY = 3
@@ -363,7 +363,7 @@ _ICIMS_LOCATION = re.compile(
     r'(?P<location>[^<]+?)\s*</span>', re.S | re.I)
 _ICIMS_DESCRIPTION = re.compile(
     r'<div class="[^"]*description[^"]*">\s*(?P<text>.*?)</div>', re.S | re.I)
-#: iCIMS writes locations as "US-NM-Albuquerque"; make that readable.
+#: iCIMS writes locations as "US-<state>-<city>"; make that readable.
 _ICIMS_PLACE = re.compile(r"^US-([A-Z]{2})-(.+)$")
 
 

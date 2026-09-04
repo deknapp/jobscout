@@ -78,3 +78,56 @@ def test_the_source_tree_hardcodes_nobody():
 
 def test_default_data_dir_is_outside_the_repo():
     assert REPO_ROOT not in config.DEFAULT_DATA_DIR.parents
+
+
+# --- no geography may be baked into the code ------------------------------
+
+#: A handful of state names and codes. If any of these can be found singled out
+#: in shipped source, some particular person's geography has leaked in.
+SAMPLE_PLACES = ("New Mexico", "Albuquerque", "Santa Fe", "Los Alamos",
+                 "California", "Texas", "Seattle", "Boston")
+
+
+def test_no_state_or_city_is_singled_out_in_shipped_code():
+    """Location is configuration. Naming one in the code is the bug this catches.
+
+    The full US state table in filters.py is fine — it is the complete list, and
+    which entries count comes entirely from settings. What is not fine is any
+    particular place appearing anywhere else.
+    """
+    from jobscout import filters
+
+    offenders = []
+    for path in _tracked_files():
+        if path.suffix != ".py" or not path.exists():
+            continue
+        if path.parts[-2] == "tests" or path.name == "filters.py":
+            continue  # tests name places on purpose; filters.py holds the table
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for place in SAMPLE_PLACES:
+            if place.lower() in text.lower():
+                offenders.append("%s names %r" % (path.name, place))
+    assert not offenders, offenders
+
+
+def test_the_shipped_example_config_carries_nobody_s_location():
+    """.env.example is what a stranger clones. It must not hold your geography."""
+    text = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if line.startswith(("JOBSCOUT_ALLOWED_STATES", "JOBSCOUT_ALLOWED_CITIES")):
+            _key, _, value = line.partition("=")
+            assert not value.strip(), (
+                "%s ships with a value — a stranger cloning this inherits it" % _key)
+
+
+def test_the_location_prompt_describes_the_configured_policy_only():
+    """A place named in a prompt steers the model there whatever the settings say."""
+    from jobscout.agents import _policy_block
+    from jobscout.config import LocationPolicy
+
+    oregon = LocationPolicy(allowed_states=["OR"], allowed_cities=["portland"],
+                            allow_remote=True).normalized()
+    block = _policy_block(oregon)
+    assert "OR" in block and "portland" in block
+    for elsewhere in ("New Mexico", "Albuquerque", "California", "Texas"):
+        assert elsewhere.lower() not in block.lower()
