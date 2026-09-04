@@ -21,6 +21,9 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import shutil
+import subprocess
+import sys
 import threading
 import webbrowser
 from dataclasses import replace
@@ -90,6 +93,37 @@ class App:
     # --- configuration ----------------------------------------------------
     def configured(self) -> bool:
         return self.settings.applications_dir.is_dir()
+
+    def pick_folder(self) -> Dict[str, Any]:
+        """Open the operating system's own folder chooser.
+
+        A browser cannot hand a page a real filesystem path — even
+        ``<input webkitdirectory>`` only yields relative names — but the server
+        is running on the same machine as the browser, so it can just ask macOS
+        for the dialog everyone already knows how to use.
+        """
+        if sys.platform != "darwin" or not shutil.which("osascript"):
+            return {"ok": False, "unsupported": True,
+                    "error": "no native folder dialog on this platform"}
+        script = ('POSIX path of (choose folder with prompt '
+                  '"Choose the folder holding your job applications")')
+        try:
+            proc = subprocess.run(
+                # `activate` brings the dialog in front of the browser window.
+                ["osascript", "-e", "activate", "-e", script],
+                capture_output=True, text=True, timeout=600)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {"ok": False, "error": str(exc)[:200]}
+
+        if proc.returncode != 0:
+            if "-128" in (proc.stderr or "") or "cancel" in (proc.stderr or "").lower():
+                return {"ok": False, "cancelled": True}
+            return {"ok": False, "error": (proc.stderr or "dialog failed")[:200]}
+
+        path = (proc.stdout or "").strip().rstrip("/")
+        if not path:
+            return {"ok": False, "cancelled": True}
+        return {"ok": True, "path": path, "inspection": self.inspect(path)}
 
     def browse(self, raw: str) -> Dict[str, Any]:
         """List sub-folders of a path, so the folder can be picked in the page."""
@@ -480,6 +514,8 @@ def make_handler(app: App):
                 self._json(app.set_requirements(data))
             elif path == "/api/configure":
                 self._json(app.configure(data))
+            elif path == "/api/pick-folder":
+                self._json(app.pick_folder())
             else:
                 self._json({"error": "not found"}, 404)
 

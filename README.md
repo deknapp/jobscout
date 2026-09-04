@@ -254,8 +254,10 @@ jobscout serve
 ```
 
 Opens `http://127.0.0.1:8765`. **Nothing has to be set up first** — no `.env`, no
-`init`, no config file. You pick the folder in the page (with a folder browser
-that tells you what it found there before you commit), set your location and
+`init`, no config file. Hit **Choose…** and you get the normal macOS folder
+dialog (a browser cannot hand a page a real filesystem path, so the server asks
+the OS for it; elsewhere there is an in-page folder browser). It tells you what
+it found in the folder before you commit to it. Then set your location and
 filters, and run:
 
 * **roles appear as they are found**, not after the last employer is read — a

@@ -212,3 +212,66 @@ def test_settings_are_only_written_when_you_ask(tmp_path):
 
     application.configure({"location": {"states": "OR"}, "remember": True})
     assert (tmp_path / "state" / "location.json").exists()
+
+
+def test_the_native_folder_dialog_returns_a_real_path(tmp_path, monkeypatch):
+    """A browser cannot hand a page a filesystem path, so the server asks macOS."""
+    import subprocess
+
+    from jobscout import web
+
+    apps = tmp_path / "apps" / "Some Lab"
+    apps.mkdir(parents=True)
+    (apps / "resume.txt").write_text("pipelines", encoding="utf-8")
+
+    class Result:
+        returncode = 0
+        stdout = str(tmp_path / "apps") + "/\n"   # osascript adds a trailing slash
+        stderr = ""
+
+    monkeypatch.setattr(web.sys, "platform", "darwin")
+    monkeypatch.setattr(web.shutil, "which", lambda name: "/usr/bin/osascript")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Result())
+
+    application = App(Settings(applications_dir=tmp_path / "nope",
+                               data_dir=tmp_path / "s", backend="mock"))
+    picked = application.pick_folder()
+    assert picked["ok"]
+    assert not picked["path"].endswith("/")
+    assert picked["inspection"]["ok"]          # inspected before you commit
+
+
+def test_cancelling_the_dialog_is_not_an_error(tmp_path, monkeypatch):
+    import subprocess
+
+    from jobscout import web
+
+    class Cancelled:
+        returncode = 1
+        stdout = ""
+        stderr = "User canceled. (-128)"
+
+    monkeypatch.setattr(web.sys, "platform", "darwin")
+    monkeypatch.setattr(web.shutil, "which", lambda name: "/usr/bin/osascript")
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Cancelled())
+
+    application = App(Settings(applications_dir=tmp_path, data_dir=tmp_path / "s",
+                               backend="mock"))
+    result = application.pick_folder()
+    assert result["cancelled"] and not result.get("error")
+
+
+def test_off_mac_it_falls_back_to_the_in_page_browser(tmp_path, monkeypatch):
+    from jobscout import web
+
+    monkeypatch.setattr(web.sys, "platform", "linux")
+    application = App(Settings(applications_dir=tmp_path, data_dir=tmp_path / "s",
+                               backend="mock"))
+    assert application.pick_folder()["unsupported"] is True
+
+
+def test_the_folder_browser_modal_starts_hidden():
+    """`display:flex` beat the hidden attribute, leaving it open over the page."""
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    assert '<div id="browser" class="modal" hidden>' in html
+    assert ".modal[hidden] { display: none; }" in html

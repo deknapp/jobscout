@@ -135,6 +135,9 @@
   .status.good { color: var(--good); }
   .status.bad { color: var(--bad); }
 
+  /* `display:flex` on its own would beat the `hidden` attribute's UA rule and
+     leave this open over the whole page, which is exactly what it did. */
+  .modal[hidden] { display: none; }
   .modal { position: fixed; inset: 0; z-index: 50; background: rgba(5,7,11,.72);
            display: flex; align-items: center; justify-content: center; padding: 24px; }
   .modal-box { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
@@ -186,7 +189,10 @@
          anywhere but the model you configured.</p>
       <div class="row">
         <input type="text" id="apps-path" placeholder="~/somewhere/job applications">
-        <button id="apps-browse">Browse</button>
+        <button class="primary" id="apps-choose">Choose…</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button id="apps-browse" style="flex:1">Browse from here instead</button>
       </div>
       <div id="apps-status" class="status"></div>
 
@@ -658,9 +664,34 @@ async function pushWeights() {
 $("r-save").addEventListener("click", saveRequirements);
 $("setup-save").addEventListener("click", saveSetup);
 $("use-saved").addEventListener("change", saveSetup);
+$("apps-choose").addEventListener("click", async () => {
+  const button = $("apps-choose");
+  button.disabled = true;
+  button.textContent = "Choosing…";
+  try {
+    const res = await api("/api/pick-folder", "POST", {});
+    if (res.ok) {
+      $("apps-path").value = res.path;
+      await saveSetup();
+    } else if (res.unsupported) {
+      await openBrowser();            // not a Mac: use the in-page browser
+    } else if (!res.cancelled) {
+      $("setup-error").textContent = res.error || "could not open the folder dialog";
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = "Choose…";
+  }
+});
 $("apps-browse").addEventListener("click", () => openBrowser());
 $("browse-up").addEventListener("click", (e) => showFolder(e.target.dataset.path));
 $("browse-cancel").addEventListener("click", () => { $("browser").hidden = true; });
+$("browser").addEventListener("click", (e) => {
+  if (e.target === $("browser")) $("browser").hidden = true;   // click the backdrop
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") $("browser").hidden = true;
+});
 $("browse-pick").addEventListener("click", async () => {
   $("apps-path").value = browsePath;
   $("browser").hidden = true;
