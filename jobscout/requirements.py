@@ -168,6 +168,12 @@ class Requirements:
     # only existed for one session silently reverted between runs.
     max_age_days: Optional[int] = None
 
+    #: Minimum fit score, 0-100, applied after ranking. An employer whose board
+    #: happens to be in your state can otherwise fill the report with roles you
+    #: would never apply for — a DevSecOps lead scoring 14 is not a result, it
+    #: is noise wearing the shape of one.
+    min_fit: Optional[int] = None
+
     # the two the pipeline already enforced, now with the policy made explicit
     unknown_location: str = EXCLUDE
     unknown_date: str = EXCLUDE
@@ -181,6 +187,7 @@ class Requirements:
             salary_min=self.salary_min,
             salary_max=self.salary_max,
             max_age_days=self.max_age_days,
+            min_fit=self.min_fit,
             unknown_salary=policy(self.unknown_salary, INCLUDE),
             employment_types=[t.strip().lower() for t in self.employment_types if t.strip()],
             unknown_employment=policy(self.unknown_employment, INCLUDE),
@@ -281,6 +288,8 @@ class Requirements:
                          % ("/".join(self.employment_types), self.unknown_employment))
         if self.exclude_clearance_required:
             parts.append("no active-clearance roles (unstated: %s)" % self.unknown_clearance)
+        if self.min_fit:
+            parts.append("fit at least %d/100" % self.min_fit)
         if self.exclude_title_words:
             parts.append("title excludes %s" % ", ".join(self.exclude_title_words))
         if self.require_title_words:

@@ -131,3 +131,27 @@ def test_the_location_prompt_describes_the_configured_policy_only():
     assert "OR" in block and "portland" in block
     for elsewhere in ("New Mexico", "Albuquerque", "California", "Texas"):
         assert elsewhere.lower() not in block.lower()
+
+
+def test_init_does_not_freeze_the_tuning_defaults_into_a_user_env():
+    """A value written to .env wins forever.
+
+    `init` used to write the day's defaults into .env as real settings, so a
+    user who ran it months ago stayed pinned to that version's behaviour — one
+    of them capped the employer search at 30 and made the tool look broken.
+    Tuning knobs are documented there, commented out.
+    """
+    from jobscout.cli import ENV_TEMPLATE
+
+    pinned = []
+    for line in ENV_TEMPLATE.splitlines() + \
+            (REPO_ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        key = line.split("=", 1)[0]
+        if key in ("JOBSCOUT_COMPANY_TARGET", "JOBSCOUT_MAX_RESOLVE_PER_RUN",
+                   "JOBSCOUT_MAX_SCANS_PER_RUN", "JOBSCOUT_MAX_VERIFY_PER_RUN",
+                   "JOBSCOUT_MAX_WORKERS", "JOBSCOUT_PROPOSE_BATCH"):
+            pinned.append(key)
+    assert not pinned, "these are pinned in a generated .env: %s" % pinned

@@ -51,13 +51,16 @@ JOBSCOUT_ALLOW_REMOTE={remote}
 JOBSCOUT_ALLOW_HYBRID=false
 JOBSCOUT_MAX_AGE_DAYS=30
 
-# Per-run budget. Every one of these is a billed model call.
-JOBSCOUT_COMPANY_TARGET=30
-JOBSCOUT_MAX_RESOLVE_PER_RUN=10
-JOBSCOUT_MAX_SCANS_PER_RUN=12
-JOBSCOUT_MAX_VERIFY_PER_RUN=20
-JOBSCOUT_MAX_RESULTS=10
-JOBSCOUT_MAX_WORKERS=4
+# Per-run budget. LEAVE THESE COMMENTED OUT unless you mean to override the
+# built-in defaults — a value written here wins forever, and pinning one to
+# whatever the default happened to be on the day you ran `init` silently
+# freezes the tool at that version's behaviour.
+# JOBSCOUT_COMPANY_TARGET=120
+# JOBSCOUT_MAX_RESOLVE_PER_RUN=20
+# JOBSCOUT_MAX_SCANS_PER_RUN=8
+# JOBSCOUT_MAX_VERIFY_PER_RUN=20
+# JOBSCOUT_MAX_RESULTS=10
+# JOBSCOUT_MAX_WORKERS=6
 
 # Ranking: how well you match, your realistic odds, and how fresh the posting is.
 JOBSCOUT_WEIGHT_FIT=0.45

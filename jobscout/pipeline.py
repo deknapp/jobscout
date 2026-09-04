@@ -470,9 +470,13 @@ def prefilter(postings: Sequence[Posting], settings: Settings, history: History,
             if not fresh:
                 _drop(posting, why, dropped, stats, "dropped_stale")
                 continue
-        elif settings.requirements.unknown_date == requirements.EXCLUDE \
-                and posting.verified != "live":
-            _drop(posting, "no post date, and you asked to drop undated postings",
+        elif settings.requirements.unknown_date == requirements.EXCLUDE:
+            # Being on a live board says the role is OPEN; it says nothing about
+            # how long it has been open. Some boards (iCIMS) publish no dates at
+            # all, and letting "verified live" stand in for a date meant an
+            # undated board sailed past a freshness limit that was set precisely
+            # to keep old postings out.
+            _drop(posting, "no posting date, and you asked to drop undated ones",
                   dropped, stats, "dropped_undated")
             continue
 
