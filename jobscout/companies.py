@@ -1,0 +1,148 @@
+"""The employer registry — the list the tool builds up about *you*, over time.
+
+Searching "jobs in New Mexico" is a bad way to find a job. Deciding which
+employers could plausibly want someone with your background, finding each one's
+real careers board once, and then reading those boards directly is a much better
+one — and it gets cheaper every run, because a company's Greenhouse URL is
+resolved once and remembered forever.
+
+That memory lives in ``<data_dir>/companies.json``, outside the repo. You can
+hand-edit it: add employers the model missed, pin a careers URL it got wrong, or
+set ``"status": "ignored"`` for somewhere you would never work.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import json
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional
+
+from .corpus import normalize_company
+
+NEW = "new"            # proposed by the model, careers board not found yet
+RESOLVED = "resolved"  # we know where its jobs live
+NO_BOARD = "no_board"  # looked, found nothing usable
+IGNORED = "ignored"    # you never want to see this employer
+
+
+@dataclass
+class Company:
+    name: str
+    why: str = ""
+    careers_url: str = ""
+    ats: str = ""
+    presence: str = ""            # e.g. "Albuquerque, NM" or "remote-first"
+    status: str = NEW
+    added: str = ""
+    last_resolved: str = ""
+    last_scanned: str = ""
+    postings_found: int = 0
+    note: str = ""
+
+    @property
+    def key(self) -> str:
+        return normalize_company(self.name)
+
+    def scanned_days_ago(self, today: Optional[dt.date] = None) -> Optional[int]:
+        if not self.last_scanned:
+            return None
+        try:
+            when = dt.date.fromisoformat(self.last_scanned[:10])
+        except ValueError:
+            return None
+        return ((today or dt.date.today()) - when).days
+
+
+class Registry:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.companies: Dict[str, Company] = {}
+        self.load()
+
+    def load(self) -> None:
+        self.companies = {}
+        if not self.path.exists():
+            return
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return
+        for item in raw.get("companies", []):
+            fields = set(Company.__dataclass_fields__)  # type: ignore[attr-defined]
+            company = Company(**{k: v for k, v in item.items() if k in fields})
+            if company.key:
+                self.companies[company.key] = company
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "updated": dt.date.today().isoformat(),
+            "companies": [asdict(c) for c in self.sorted()],
+        }
+        self.path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                             encoding="utf-8")
+
+    def sorted(self) -> List[Company]:
+        return sorted(self.companies.values(), key=lambda c: c.name.lower())
+
+    def get(self, name: str) -> Optional[Company]:
+        return self.companies.get(normalize_company(name))
+
+    def add(self, company: Company) -> Company:
+        """Insert, or fill gaps in an existing entry without clobbering it."""
+        key = company.key
+        if not key:
+            return company
+        existing = self.companies.get(key)
+        if existing is None:
+            company.added = company.added or dt.date.today().isoformat()
+            self.companies[key] = company
+            return company
+        for attr in ("why", "careers_url", "ats", "presence", "note"):
+            if not getattr(existing, attr) and getattr(company, attr):
+                setattr(existing, attr, getattr(company, attr))
+        if existing.status == NEW and company.status == RESOLVED:
+            existing.status = RESOLVED
+        return existing
+
+    def known_names(self) -> List[str]:
+        return [c.name for c in self.sorted()]
+
+    def active(self) -> List[Company]:
+        return [c for c in self.sorted() if c.status != IGNORED]
+
+    def needing_resolution(self) -> List[Company]:
+        return [c for c in self.active() if c.status == NEW and not c.careers_url]
+
+    def scannable(self, rescan_after_days: int = 3,
+                  today: Optional[dt.date] = None) -> List[Company]:
+        """Companies with a known board that we have not read recently."""
+        out = []
+        for company in self.active():
+            if not company.careers_url or company.status == NO_BOARD:
+                continue
+            age = company.scanned_days_ago(today)
+            if age is None or age >= rescan_after_days:
+                out.append(company)
+        return out
+
+    def mark_resolved(self, company: Company, careers_url: str, ats: str = "") -> None:
+        company.careers_url = careers_url
+        company.ats = ats
+        company.status = RESOLVED if careers_url else NO_BOARD
+        company.last_resolved = dt.date.today().isoformat()
+
+    def mark_scanned(self, company: Company, found: int) -> None:
+        company.last_scanned = dt.date.today().isoformat()
+        company.postings_found = found
+
+    def summary(self) -> str:
+        by_status: Dict[str, int] = {}
+        for company in self.companies.values():
+            by_status[company.status] = by_status.get(company.status, 0) + 1
+        parts = ["%d employer(s) known" % len(self.companies)]
+        for status in (RESOLVED, NEW, NO_BOARD, IGNORED):
+            if by_status.get(status):
+                parts.append("%d %s" % (by_status[status], status))
+        return ", ".join(parts)
