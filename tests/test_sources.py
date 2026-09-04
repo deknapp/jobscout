@@ -57,3 +57,19 @@ def test_unknown_sites_are_rejected_not_merely_flagged():
 def test_acronym_domains_count_as_the_employer():
     assert classify("https://careers.lanl.example/jobs/1",
                     "Los Alamos National Laboratory")[0] == EMPLOYER
+
+
+def test_a_domain_pasted_in_as_an_ats_slug_is_repaired():
+    """Models reliably paste the company's domain in where a handle belongs."""
+    from jobscout.sources import clean_board_url
+
+    assert (clean_board_url("https://jobs.lever.co/descarteslabs.com")
+            == "https://jobs.lever.co/descarteslabs")
+    assert (clean_board_url("https://boards.greenhouse.io/acme.io/jobs/1")
+            == "https://boards.greenhouse.io/acme/jobs/1")
+    # Anything already correct, or on a host where the path is not a handle,
+    # must be left exactly as it is.
+    assert (clean_board_url("https://jobs.lever.co/descarteslabs")
+            == "https://jobs.lever.co/descarteslabs")
+    assert (clean_board_url("https://careers.acme.com/jobs/1.com")
+            == "https://careers.acme.com/jobs/1.com")

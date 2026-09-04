@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from . import __version__, report
-from .companies import Company, IGNORED, Registry
+from .companies import Company, IGNORED, NEW, Registry
 from .config import (ConfigError, DEFAULT_DATA_DIR, ENV_FILE, LocationPolicy, Settings,
                      load_settings, redact, save_location_policy)
 from .corpus import load_corpus, summarize
@@ -187,6 +187,17 @@ def cmd_companies(args: argparse.Namespace) -> int:
         company.status = IGNORED
         changed = True
         print("ignoring %s" % company.name)
+    for name in args.reresolve or []:
+        company = registry.get(name)
+        if company is None:
+            print("no such employer: %s" % name)
+            continue
+        company.careers_url = ""
+        company.ats = ""
+        company.status = NEW
+        company.last_scanned = ""
+        changed = True
+        print("will look up %s's board again on the next run" % company.name)
     for name in args.forget or []:
         company = registry.get(name)
         if company is not None:
@@ -310,6 +321,8 @@ def build_parser() -> argparse.ArgumentParser:
     companies = subparsers.add_parser("companies", help="list or edit the employer registry")
     companies.add_argument("--add", action="append", metavar="NAME", help="add an employer by name")
     companies.add_argument("--ignore", action="append", metavar="NAME", help="never suggest this employer")
+    companies.add_argument("--reresolve", action="append", metavar="NAME",
+                           help="forget the board URL and look it up again")
     companies.add_argument("--forget", action="append", metavar="NAME", help="remove an employer entirely")
     companies.set_defaults(func=cmd_companies)
 

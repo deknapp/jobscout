@@ -208,6 +208,38 @@ def check_source(url: str, company: str = "") -> Tuple[bool, str, str]:
         "%s — not the employer's own board, so the listing cannot be trusted" % label)
 
 
+#: ATS boards whose first path segment is the employer's handle.
+SLUG_ATS_HOSTS = ("jobs.lever.co", "boards.greenhouse.io", "job-boards.greenhouse.io",
+                  "jobs.ashbyhq.com", "apply.workable.com", "breezy.hr",
+                  "recruitee.com", "teamtailor.com")
+
+_SLUG_TLD = re.compile(r"\.(com|io|ai|co|net|org|dev|xyz|us|bio|tech)$", re.I)
+
+
+def clean_board_url(url: str) -> str:
+    """Repair the one mistake models reliably make with ATS board URLs.
+
+    Asked for a company's Lever board they will often paste the company's
+    *domain* in as the handle — ``jobs.lever.co/descarteslabs.com`` — which 404s.
+    The handle is a slug, never a hostname, so a trailing TLD on that first path
+    segment is always wrong and is dropped.
+    """
+    if not url:
+        return url
+    host = host_of(url)
+    if not any(_host_matches(host, ats) for ats in SLUG_ATS_HOSTS):
+        return url
+    parts = urlsplit(url if "://" in url else "https://" + url)
+    segments = [seg for seg in (parts.path or "").split("/") if seg]
+    if not segments:
+        return url
+    cleaned = _SLUG_TLD.sub("", segments[0])
+    if cleaned == segments[0] or not cleaned:
+        return url
+    segments[0] = cleaned
+    return "%s://%s/%s" % (parts.scheme or "https", parts.netloc, "/".join(segments))
+
+
 def looks_like_careers_page(url: str) -> bool:
     lowered = (url or "").lower()
     if classify(url)[0] == ATS:

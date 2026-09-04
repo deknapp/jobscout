@@ -138,7 +138,7 @@ def resolve_boards(settings: Settings, llm: LLM, registry: Registry) -> int:
         if error is not None:
             company.note = "board lookup failed: %s" % str(error)[:120]
             continue
-        url = (result or {}).get("careers_url", "")
+        url = sources.clean_board_url((result or {}).get("careers_url", ""))
         if url:
             ok, source_class, reason = sources.check_source(url, company.name)
             if not ok:
