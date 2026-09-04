@@ -55,10 +55,16 @@
   }
   .spacer { flex: 1; }
 
-  .layout { display: grid; grid-template-columns: 268px 1fr; gap: 22px; padding: 22px; align-items: start; }
+  .layout { display: grid; grid-template-columns: 268px minmax(0, 1fr); gap: 22px; padding: 22px; align-items: start; }
+  /* Grid children default to min-width:auto, so a column CANNOT shrink below
+     its content's intrinsic width. Long log lines and long paragraphs then push
+     the main column past the viewport, the page scrolls sideways, and the
+     sticky sidebar ends up sitting on top of the results. This one line is the
+     whole fix. */
+  .layout > * { min-width: 0; }
   @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 
-  aside { position: sticky; top: 76px; display: grid; gap: 14px; }
+  aside { position: sticky; top: 76px; display: grid; gap: 14px; min-width: 0; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
   .card h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
 
@@ -78,20 +84,23 @@
   .role {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 16px 18px;
-    display: grid; grid-template-columns: 74px 1fr; gap: 18px;
+    display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 18px;
   }
+  .role > * { min-width: 0; }
   .role.done { opacity: .45; }
   .rank { text-align: center; }
   .pct { font-size: 26px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
   .pct sup { font-size: 12px; font-weight: 600; color: var(--muted); }
   .rank .band { font-size: 10px; color: var(--dim); line-height: 1.25; margin-top: 3px; }
-  .ring { margin: 9px auto 0; width: 54px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .ring { margin: 9px auto 0; width: 68px; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
   .ring i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); }
 
-  .role h3 { margin: 0 0 3px; font-size: 15.5px; font-weight: 650; letter-spacing: -.1px; }
+  .role h3 { margin: 0 0 3px; font-size: 15.5px; font-weight: 650; letter-spacing: -.1px;
+             overflow-wrap: anywhere; }
   .role h3 .co { color: var(--muted); font-weight: 500; }
   .meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 10px; }
-  .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); }
+  .tag { font-size: 11.5px; padding: 2px 8px; border-radius: 6px; background: var(--panel-2);
+         border: 1px solid var(--line); color: var(--muted); overflow-wrap: anywhere; }
   .tag.remote { color: var(--good); border-color: #1f4030; background: #10201a; }
   .tag.local { color: var(--accent); border-color: #1d3355; background: #101827; }
   .tag.fresh { color: var(--warm); border-color: #47380f; background: #1f1a0c; }
@@ -106,7 +115,7 @@
   .bar.odds i em { background: var(--warm); }
   .bar.fresh i em { background: var(--good); }
 
-  .note { font-size: 13px; color: #c3cad6; margin: 0 0 7px; }
+  .note { font-size: 13px; color: #c3cad6; margin: 0 0 7px; overflow-wrap: anywhere; }
   .note b { color: var(--text); font-weight: 600; }
   .note.warn b { color: var(--warm); }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
@@ -161,6 +170,7 @@
     font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
     background: #0a0d13; border: 1px solid var(--line); border-radius: 10px;
     padding: 12px 14px; max-height: 340px; overflow: auto; white-space: pre-wrap;
+    overflow-wrap: anywhere;
     color: var(--muted); margin-top: 12px;
   }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; }

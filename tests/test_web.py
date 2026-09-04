@@ -275,3 +275,16 @@ def test_the_folder_browser_modal_starts_hidden():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     assert '<div id="browser" class="modal" hidden>' in html
     assert ".modal[hidden] { display: none; }" in html
+
+
+def test_the_grid_columns_can_actually_shrink():
+    """Without min-width:0 a grid column cannot shrink below its content.
+
+    That is what pushed the results column past the viewport and left the
+    sticky sidebar sitting on top of the job cards.
+    """
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    assert ".layout > * { min-width: 0; }" in html
+    assert "grid-template-columns: 268px minmax(0, 1fr)" in html
+    assert ".role > * { min-width: 0; }" in html
+    assert "grid-template-columns: 92px minmax(0, 1fr)" in html
