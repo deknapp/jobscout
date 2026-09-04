@@ -216,9 +216,17 @@ class App:
 
         if data.get("max_age_days"):
             try:
-                settings.max_age_days = max(1, int(data["max_age_days"]))
+                days = max(1, int(data["max_age_days"]))
             except (TypeError, ValueError):
-                pass
+                days = 0
+            if days:
+                settings.max_age_days = days
+                # Persist immediately: a freshness limit that lived only for the
+                # session quietly reverted between runs, which is worse than
+                # useless because the effect shows up as "no jobs found".
+                settings.requirements.max_age_days = days
+                settings.ensure_data_dir()
+                save_requirements(settings.data_dir, settings.requirements)
         if data.get("max_scans"):
             try:
                 settings.max_scans_per_run = max(1, int(data["max_scans"]))

@@ -284,7 +284,10 @@ def test_the_grid_columns_can_actually_shrink():
     sticky sidebar sitting on top of the job cards.
     """
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
-    assert ".layout > * { min-width: 0; }" in html
-    assert "grid-template-columns: 268px minmax(0, 1fr)" in html
+    # The shell: a fixed sidebar and a main column that cannot widen the page.
+    assert "body { overflow-x: hidden; }" in html
+    assert "aside { flex: 0 0 268px; width: 268px; max-width: 268px;" in html
+    assert "main { flex: 1 1 0; min-width: 0; max-width: 100%; overflow: hidden; }" in html
+    # And inside each card, the text column can shrink too.
     assert ".role > * { min-width: 0; }" in html
     assert "grid-template-columns: 92px minmax(0, 1fr)" in html

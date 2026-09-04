@@ -196,25 +196,48 @@ def load_or_build_profile(settings: Settings, llm: LLM, corpus: Corpus,
 
 # --- employers -------------------------------------------------------------
 
+#: Batches of employer proposals in a single run. The registry is the search
+#: surface, so one batch of 25 is not a search — it is a sample.
+MAX_PROPOSE_BATCHES = 5
+
+
 def expand_registry(settings: Settings, llm: LLM, registry: Registry,
                     profile: Dict[str, Any], force: bool = False) -> int:
-    """Ask for more employers if the registry is short of its target."""
-    active = registry.active()
-    if len(active) >= settings.company_target and not force:
-        return 0
-    want = settings.propose_batch if force else min(
-        settings.propose_batch, settings.company_target - len(active))
-    _log("proposing %d employer(s) that fit your background and location…" % want)
-    proposed = agents.propose_companies(
-        llm, profile, settings.location, registry.known_names(), count=want)
+    """Keep asking for employers until the registry reaches its target.
+
+    Asking once and stopping left the search resting on a couple of dozen
+    employers, which is why so little came back. Each batch is told who is
+    already on the list, so it proposes different ones.
+    """
     added = 0
-    for company in proposed:
-        before = len(registry.companies)
-        registry.add(company)
-        if len(registry.companies) > before:
-            added += 1
-    registry.save()
-    _log("added %d new employer(s) — registry now: %s" % (added, registry.summary()))
+    for batch in range(MAX_PROPOSE_BATCHES):
+        active = registry.active()
+        short = settings.company_target - len(active)
+        if short <= 0 and not (force and batch == 0):
+            break
+        want = settings.propose_batch if (force and batch == 0) \
+            else min(settings.propose_batch, short)
+        if want <= 0:
+            break
+        _log("proposing %d more employer(s) (%d known, aiming for %d)…"
+             % (want, len(active), settings.company_target))
+        try:
+            proposed = agents.propose_companies(
+                llm, profile, settings.location, registry.known_names(), count=want)
+        except LLMError as exc:
+            _log("  employer proposal failed: %s" % str(exc)[:140])
+            break
+        new_here = 0
+        for company in proposed:
+            before = len(registry.companies)
+            registry.add(company)
+            if len(registry.companies) > before:
+                new_here += 1
+        added += new_here
+        registry.save()
+        _log("  +%d employer(s) — registry now: %s" % (new_here, registry.summary()))
+        if new_here == 0:
+            break      # it has run out of new names; stop paying for more
     return added
 
 
@@ -234,6 +257,12 @@ def resolve_boards(settings: Settings, llm: LLM, registry: Registry) -> int:
             company.note = "board lookup failed: %s" % str(error)[:120]
             continue
         url = sources.clean_board_url((result or {}).get("careers_url", ""))
+        if url and not fetchers.supports(url):
+            # A vanity careers domain is usually a wrapper around a real ATS.
+            behind = fetchers.discover_ats(url)
+            if behind:
+                _log("      ↳ %s is really %s" % (company.name, behind))
+                url = behind
         if url:
             ok, source_class, reason = sources.check_source(url, company.name)
             if not ok:
@@ -295,6 +324,36 @@ def _scan_one(settings: Settings, llm: LLM, company: Company,
     found = agents.scan_board(llm, company, profile, settings.location,
                               settings.max_age_days)
     return found, "agent", 0
+
+
+def upgrade_boards(settings: Settings, registry: Registry) -> int:
+    """Look behind every careers page we settled for, once.
+
+    Boards resolved before ATS discovery existed — or resolved to a marketing
+    page — sit on the slow agent path forever and return nothing. This is free:
+    one page fetch each, no model involved.
+    """
+    stale = [c for c in registry.active()
+             if c.careers_url and not fetchers.supports(c.careers_url)
+             and "ats-checked" not in (c.note or "")]
+    if not stale:
+        return 0
+    _log("checking %d careers page(s) for a real job board behind them…" % len(stale))
+    upgraded = 0
+    for company, found, error in _parallel(
+            stale, lambda c: fetchers.discover_ats(c.careers_url),
+            settings.max_workers, stage="inspecting", label=lambda c: c.name,
+            detail=lambda url: ("found %s" % url[:56]) if url else "no ATS behind it"):
+        if error is not None or not found:
+            company.note = ((company.note or "") + " ats-checked").strip()
+            continue
+        registry.mark_resolved(company, found, "")
+        company.note = ((company.note or "") + " ats-checked").strip()
+        upgraded += 1
+    registry.save()
+    if upgraded:
+        _log("upgraded %d employer(s) to a board that can be read directly" % upgraded)
+    return upgraded
 
 
 def scan_boards(settings: Settings, llm: LLM, registry: Registry,
@@ -526,6 +585,7 @@ def find(settings: Settings, *, refresh_profile: bool = False,
 
     expand_registry(settings, llm, registry, profile, force=expand)
     resolve_boards(settings, llm, registry)
+    upgrade_boards(settings, registry)
     # Filter each employer's board the moment it is read, so survivors can be
     # published straight away rather than waiting on the slowest board.
     seen_ids: set = set()

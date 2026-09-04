@@ -363,6 +363,7 @@ def load_settings(require_applications: bool = True) -> Settings:
     if backend not in ("cli", "anthropic", "mock"):
         raise ConfigError("JOBSCOUT_BACKEND must be cli, anthropic or mock (got %r)" % backend)
 
+    requirements = load_requirements(data_dir)
     settings = Settings(
         applications_dir=applications_dir,
         data_dir=data_dir,
@@ -386,10 +387,14 @@ def load_settings(require_applications: bool = True) -> Settings:
         max_workers=_env_int("JOBSCOUT_MAX_WORKERS", 4),
         timeout_seconds=_env_int("JOBSCOUT_TIMEOUT_SECONDS", 600),
         location=load_location_policy(data_dir),
-        requirements=load_requirements(data_dir),
+        requirements=requirements,
         target_titles=_env_list("JOBSCOUT_TARGET_TITLES"),
         exclude_companies=_env_list("JOBSCOUT_EXCLUDE_COMPANIES"),
     )
+    # A saved freshness limit wins over the built-in default, but never over an
+    # explicit environment variable.
+    if requirements.max_age_days and not _env("JOBSCOUT_MAX_AGE_DAYS"):
+        settings.max_age_days = requirements.max_age_days
     return settings
 
 

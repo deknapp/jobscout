@@ -214,3 +214,71 @@ def test_icims_is_parsed_out_of_server_rendered_html(monkeypatch):
     assert "reconcile invoices" in first.summary
     assert "?" not in first.url                           # the iframe param is dropped
     assert second.location == "Los Alamos, NM"
+
+
+# --- finding the ATS behind a vanity careers domain ------------------------
+
+def test_a_vanity_careers_domain_is_followed_to_its_real_board(monkeypatch):
+    """jobs.<company>.com is usually a wrapper. NVIDIA's is a Workday board."""
+    page = ('<a href="https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/login">'
+            'Search jobs</a>')
+
+    class Response:
+        def geturl(self): return "https://jobs.nvidia.com/careers"
+        def read(self, *a): return page.encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(fetchers.urllib.request, "urlopen", lambda *a, **k: Response())
+    found = fetchers.discover_ats("https://jobs.nvidia.com/")
+    # The deep link is trimmed back to the board itself.
+    assert found == "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite"
+    assert fetchers.supports(found)
+
+
+def test_a_careers_page_that_redirects_straight_to_an_ats(monkeypatch):
+    """ARA's careers domain simply forwards to UltiPro."""
+    class Response:
+        def geturl(self):
+            return ("https://recruiting.ultipro.com/APP1010ARAI/JobBoard/"
+                    "07442cec-d18e-4589-ab15-8342edc29af7")
+        def read(self, *a): return b""
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(fetchers.urllib.request, "urlopen", lambda *a, **k: Response())
+    found = fetchers.discover_ats("https://careers.ara.com/")
+    assert fetchers.supports(found) and "ultipro" in found
+
+
+def test_a_page_with_no_ats_behind_it_says_so(monkeypatch):
+    class Response:
+        def geturl(self): return "https://rs21.io/careers"
+        def read(self, *a): return b"<p>Email us your resume.</p>"
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(fetchers.urllib.request, "urlopen", lambda *a, **k: Response())
+    assert fetchers.discover_ats("https://rs21.io/careers") == ""
+
+
+ULTIPRO = {"totalCount": 2, "opportunities": [
+    {"Id": 111, "Title": "Structural Engineer",
+     "Locations": [{"LocalizedDescription": "NM01 - Albuquerque"}],
+     "PostedDate": "2026-09-03T19:09:22.346Z", "BriefDescription": "<p>Build.</p>"},
+    {"Id": 222, "Title": "Senior Project Manager", "JobLocationType": "Remote",
+     "Locations": [], "PostedDate": "2026-09-01T00:00:00.000Z"},
+]}
+
+
+def test_ultipro_boards_are_read_directly(monkeypatch):
+    monkeypatch.setattr(fetchers, "_post_json", lambda url, body: ULTIPRO)
+    result = fetchers.fetch(
+        "ARA", "https://recruiting.ultipro.com/APP1010ARAI/JobBoard/"
+               "07442cec-d18e-4589-ab15-8342edc29af7", context={})
+    assert result.ats == "UltiPro" and len(result.postings) == 2
+    first, second = result.postings
+    assert first.location == "NM01 - Albuquerque"   # the state code is still findable
+    assert first.posted == "2026-09-03"
+    assert "opportunityId=111" in first.url
+    assert second.location == "Remote"

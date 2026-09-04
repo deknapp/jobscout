@@ -112,6 +112,8 @@ def settings(tmp_path, monkeypatch):
     # exercises the agent-driven fallback path.
     monkeypatch.setattr(fetchers, "fetch",
                         lambda company, url, context=None: None)
+    # No test touches the network: ATS discovery fetches careers pages.
+    monkeypatch.setattr(fetchers, "discover_ats", lambda url: "")
 
     return Settings(
         applications_dir=tmp_path / "apps",
@@ -274,6 +276,7 @@ def test_free_boards_are_read_every_run_and_never_capped(settings, monkeypatch):
             read.append(company) or FetchResult(postings=[], ats="Greenhouse"))
         if "greenhouse" in url else None)
 
+    monkeypatch.setattr(fetchers, "discover_ats", lambda url: "")
     settings.max_scans_per_run = 2      # applies to the slow ones only
     settings.company_target = 0         # do not propose more
     pipeline.find(settings, today=TODAY)

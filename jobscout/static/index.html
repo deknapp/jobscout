@@ -55,16 +55,20 @@
   }
   .spacer { flex: 1; }
 
-  .layout { display: grid; grid-template-columns: 268px minmax(0, 1fr); gap: 22px; padding: 22px; align-items: start; }
-  /* Grid children default to min-width:auto, so a column CANNOT shrink below
-     its content's intrinsic width. Long log lines and long paragraphs then push
-     the main column past the viewport, the page scrolls sideways, and the
-     sticky sidebar ends up sitting on top of the results. This one line is the
-     whole fix. */
-  .layout > * { min-width: 0; }
-  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
-
-  aside { position: sticky; top: 76px; display: grid; gap: 14px; min-width: 0; }
+  /* The shell is flex, not grid, and the main column is hard-capped rather than
+     merely asked to shrink. Grid children are min-width:auto, so the results
+     column could not shrink below its widest log line; the page then scrolled
+     sideways and the sticky sidebar came to rest on top of the job cards.
+     Nothing here is allowed to widen the page. */
+  body { overflow-x: hidden; }
+  .layout { display: flex; align-items: flex-start; gap: 22px; padding: 22px; }
+  aside { flex: 0 0 268px; width: 268px; max-width: 268px;
+          position: sticky; top: 76px; display: grid; gap: 14px; }
+  main { flex: 1 1 0; min-width: 0; max-width: 100%; overflow: hidden; }
+  @media (max-width: 900px) {
+    .layout { flex-direction: column; }
+    aside { position: static; flex: 1 1 auto; width: 100%; max-width: 100%; }
+  }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
   .card h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
 
@@ -80,7 +84,7 @@
     border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font: inherit;
   }
 
-  .roles { display: grid; gap: 14px; }
+  .roles { display: grid; gap: 14px; min-width: 0; }
   .role {
     background: var(--panel); border: 1px solid var(--line);
     border-radius: var(--radius); padding: 16px 18px;
@@ -170,7 +174,7 @@
     font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
     background: #0a0d13; border: 1px solid var(--line); border-radius: 10px;
     padding: 12px 14px; max-height: 340px; overflow: auto; white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    overflow-wrap: anywhere; max-width: 100%;
     color: var(--muted); margin-top: 12px;
   }
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--good); margin-right: 6px; }

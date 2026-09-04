@@ -433,6 +433,90 @@ def fetch_icims(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
                        note="%d role(s) on the iCIMS board" % len(postings))
 
 
+# --- UltiPro / UKG ---------------------------------------------------------
+
+_ULTIPRO = re.compile(r"/([A-Za-z0-9]+)/JobBoard/([0-9a-fA-F-]{36})")
+
+
+def fetch_ultipro(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
+    match = _ULTIPRO.search(url or "")
+    if not match:
+        return FetchResult(ok=False, note="no UltiPro job-board id in the URL")
+    app, board = match.group(1), match.group(2)
+    base = "https://recruiting.ultipro.com/%s/JobBoard/%s" % (app, board)
+    data = _post_json(base + "/JobBoardView/LoadSearchResults",
+                      {"opportunitySearch": {"Top": 200, "Skip": 0, "QueryString": "",
+                                             "OrderBy": [], "Filters": []}})
+    postings = []
+    for job in data.get("opportunities") or []:
+        places = [str((p or {}).get("LocalizedDescription") or "").strip()
+                  for p in (job.get("Locations") or [])]
+        places = [p for p in places if p]
+        location = "; ".join(places[:6])
+        if str(job.get("JobLocationType") or "").lower() == "remote" \
+                and "remote" not in location.lower():
+            location = "Remote — %s" % location if location else "Remote"
+        postings.append(Posting(
+            company=company,
+            title=str(job.get("Title") or "").strip(),
+            location=location,
+            url="%s/OpportunityDetail?opportunityId=%s" % (base, job.get("Id") or ""),
+            source="UltiPro",
+            posted=_iso_date(job.get("PostedDate")),
+            summary=_plain(job.get("BriefDescription")),
+        ))
+    return FetchResult(postings=postings, ats="UltiPro",
+                       note="%d role(s) on the UltiPro board" % len(postings))
+
+
+# --- finding the ATS hiding behind a careers page --------------------------
+#
+# A vanity careers domain — jobs.<company>.com, careers.<company>.com — is very
+# often a wrapper around a real ATS. NVIDIA's is a Workday board; ARA's simply
+# redirects to UltiPro. Left as-is, those employers fall to the slow agent scan
+# and return nothing. Following the redirect and reading the page's own links
+# turns them into free, complete board reads.
+
+_ATS_LINK = re.compile(
+    r"https?://[\w.-]*(?:job-boards\.greenhouse\.io|boards\.greenhouse\.io"
+    r"|jobs\.lever\.co|jobs\.ashbyhq\.com|myworkdayjobs\.com"
+    r"|jobs\.smartrecruiters\.com|apply\.workable\.com|icims\.com"
+    r"|recruiting\.ultipro\.com)/[\w./%-]*", re.I)
+
+
+def discover_ats(url: str) -> str:
+    """The ATS board behind a careers page, or "" if there is none.
+
+    Follows the redirect first — some careers domains simply forward to the ATS
+    — then reads the page's own links.
+    """
+    if not url or supports(url):
+        return url or ""
+    try:
+        request = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) jobscout/0.1",
+            "Accept": "text/html,application/xhtml+xml"})
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            final = response.geturl()
+            page = response.read(600_000).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+    if supports(final):
+        return final
+    for candidate in _ATS_LINK.findall(page):
+        cleaned = candidate.rstrip("\"'&;,)")
+        # Trim a deep link back to the board itself.
+        for marker in ("/login", "/apply", "/job/", "/jobs/"):
+            index = cleaned.lower().find(marker)
+            if index > 0:
+                cleaned = cleaned[:index]
+                break
+        if supports(cleaned):
+            return cleaned
+    return ""
+
+
 #: host suffix -> fetcher. Order does not matter; hosts are disjoint.
 FETCHERS: Tuple[Tuple[str, Callable[[str, str, Dict[str, Any]], FetchResult]], ...] = (
     ("boards.greenhouse.io", fetch_greenhouse),
@@ -446,6 +530,7 @@ FETCHERS: Tuple[Tuple[str, Callable[[str, str, Dict[str, Any]], FetchResult]], .
     ("myworkdayjobs.com", fetch_workday),
     ("myworkdaysite.com", fetch_workday),
     ("icims.com", fetch_icims),
+    ("recruiting.ultipro.com", fetch_ultipro),
 )
 
 

@@ -164,6 +164,10 @@ class Requirements:
     exclude_title_words: List[str] = field(default_factory=list)
     require_title_words: List[str] = field(default_factory=list)
 
+    # freshness. Lives here because it IS a filter, and because a setting that
+    # only existed for one session silently reverted between runs.
+    max_age_days: Optional[int] = None
+
     # the two the pipeline already enforced, now with the policy made explicit
     unknown_location: str = EXCLUDE
     unknown_date: str = EXCLUDE
@@ -176,6 +180,7 @@ class Requirements:
         return Requirements(
             salary_min=self.salary_min,
             salary_max=self.salary_max,
+            max_age_days=self.max_age_days,
             unknown_salary=policy(self.unknown_salary, INCLUDE),
             employment_types=[t.strip().lower() for t in self.employment_types if t.strip()],
             unknown_employment=policy(self.unknown_employment, INCLUDE),
