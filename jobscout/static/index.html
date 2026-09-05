@@ -59,20 +59,38 @@
      merely asked to shrink. Grid children are min-width:auto, so the results
      column could not shrink below its widest log line; the page then scrolled
      sideways and the sticky sidebar came to rest on top of the job cards.
-     Nothing here is allowed to widen the page. */
+     Nothing here is allowed to widen the page.
+
+     The same min-content rule bites one level down, which is why the sidebar
+     kept covering the results even after the shell was fixed: `aside` is a grid,
+     and an implicit column is auto-sized, so it grows to the widest card's
+     min-content and spills out of the 268px box the flex line reserved for it.
+     A bare `1fr` is minmax(auto, 1fr) and does the same. So the column is
+     minmax(0, 1fr) here and in every nested grid, and form controls — whose
+     intrinsic width is a browser default of roughly 150px each, two of them
+     side by side being what actually inflated the sidebar to 348px — are told
+     they may shrink. Any new two-up row must use minmax(0, 1fr), not 1fr. */
   body { overflow-x: hidden; }
   .layout { display: flex; align-items: flex-start; gap: 22px; padding: 22px; }
   aside { flex: 0 0 268px; width: 268px; max-width: 268px;
-          position: sticky; top: 76px; display: grid; gap: 14px; }
+          position: sticky; top: 76px;
+          display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px;
+          /* Taller than the viewport, so it has to scroll inside itself —
+             a sticky column that overflows the screen can never be read to
+             the bottom, and the Requirements card lives down there. */
+          max-height: calc(100vh - 98px); overflow-y: auto; overscroll-behavior: contain;
+          scrollbar-width: thin; padding-right: 2px; }
+  aside > * { min-width: 0; }
   main { flex: 1 1 0; min-width: 0; max-width: 100%; overflow: hidden; }
   @media (max-width: 900px) {
     .layout { flex-direction: column; }
-    aside { position: static; flex: 1 1 auto; width: 100%; max-width: 100%; }
+    aside { position: static; flex: 1 1 auto; width: 100%; max-width: 100%;
+            max-height: none; overflow-y: visible; }
   }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
   .card h2 { margin: 0 0 10px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
 
-  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 8px; }
+  .stat-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 8px; }
   .stat b { display: block; font-size: 19px; font-variant-numeric: tabular-nums; }
   .stat span { font-size: 11px; color: var(--muted); }
 
@@ -81,6 +99,16 @@
   input[type=range] { width: 100%; accent-color: var(--accent); margin-top: 4px; }
   select, input[type=search] {
     width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font: inherit;
+  }
+  input, select { min-width: 0; }
+  /* A text input with no width rule renders at the browser's default
+     `size` — about 153px — regardless of the box it sits in. Two of them
+     side by side is what pushed the sidebar 80px wider than its column.
+     Every text field in a label gets its own full-width line instead. */
+  label.field > input[type=text] {
+    display: block; width: 100%; margin-top: 4px;
+    background: var(--panel-2); color: var(--text);
     border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font: inherit;
   }
 
@@ -124,8 +152,8 @@
   .note.warn b { color: var(--warm); }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
-  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px; margin-top: 5px; }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .checks { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 6px; margin-top: 5px; }
   .checks label, label.field.inline { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   label.field.inline { margin-bottom: 10px; }
   input[type=checkbox] { accent-color: var(--accent); margin: 0; }
