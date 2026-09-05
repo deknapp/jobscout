@@ -15,6 +15,7 @@
     jobscout network me --add "Employer" --from 2020-08 --to 2024-05
     jobscout inbox applications | recruiters | contacts
     jobscout pursuits [--company NAME] [--all]
+    jobscout dismiss "<who or where>" --reason "..." [--employer]
 """
 from __future__ import annotations
 
@@ -387,6 +388,12 @@ def cmd_mark(args: argparse.Namespace) -> int:
 
 # --- network ---------------------------------------------------------------
 
+def _killed(settings):
+    from .dismissed import Dismissals
+
+    return Dismissals(settings.dismissed_path)
+
+
 def _network_context(settings):
     """Everything the ranking needs, gathered from what jobscout already knows."""
     from .network import load_affiliations
@@ -553,15 +560,17 @@ def cmd_network(args: argparse.Namespace) -> int:
 
     # default: leads
     leads = net.rank(connections, affiliations, targets, profile,
-                     conversations=net.load_conversations(settings.data_dir))
+                     conversations=net.load_conversations(settings.data_dir),
+                     killed=_killed(settings))
     if args.bucket:
         leads = [l for l in leads if l.bucket == args.bucket]
     if args.company:
         from .corpus import normalize_company
         key = normalize_company(args.company)
         leads = [l for l in leads if l.connection.company_key == key]
+    buried = [l for l in leads if l.killed]
     if not args.all:
-        leads = [l for l in leads if l.bucket != net.REST]
+        leads = [l for l in leads if l.bucket != net.REST and not l.killed]
     shown = leads[:args.max]
     if not shown:
         print("nothing matched")
@@ -590,7 +599,9 @@ def cmd_network(args: argparse.Namespace) -> int:
             if connection.url:
                 print("       %s" % connection.url)
         print()
-    print("%d shown of %d connection(s)." % (len(shown), len(connections)))
+    print("%d shown of %d connection(s)%s."
+          % (len(shown), len(connections),
+             "; %d you ruled out (--all to see)" % len(buried) if buried else ""))
     return 0
 
 
@@ -639,7 +650,8 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     applied = [a.company for a in box.applications(messages)]
     applied += profile.get("applied_companies", []) or []
     ranked = box.follow_ups(box.outreach(messages), target_keys=targets,
-                            applied_keys=applied)
+                            applied_keys=applied, policy=settings.location,
+                            killed=_killed(settings))
     if args.max:
         ranked = ranked[:args.max]
     if not ranked:
@@ -681,7 +693,7 @@ def cmd_pursuits(args: argparse.Namespace) -> int:
     only = [args.company] if args.company else None
     sys.stderr.write("reading %d message(s) across %d employer(s)…\n"
                      % (len(messages), len(live.group(messages))))
-    advice = live.review(messages, llm, only=only)
+    advice = live.review(messages, llm, only=only, killed=_killed(settings))
     if not advice:
         print("nothing live found")
         return 0
@@ -715,6 +727,41 @@ def cmd_pursuits(args: argparse.Namespace) -> int:
     print("%d live pursuit(s)%s." % (shown, "; %d closed or dormant (--all to see)"
                                      % hidden if hidden else ""))
     sys.stderr.write("%s\n" % llm.usage.summary())
+    return 0
+
+
+# --- dismiss ---------------------------------------------------------------
+
+def cmd_dismiss(args: argparse.Namespace) -> int:
+    from .dismissed import Dismissals, EMPLOYER, PERSON
+
+    settings = load_settings(require_applications=False)
+    settings.ensure_data_dir()
+    killed = Dismissals(settings.dismissed_path)
+
+    if args.list or (not args.who and not args.undo):
+        if not killed:
+            print("nothing dismissed yet")
+            return 0
+        for entry in killed.sorted():
+            print("%-9s %s" % (entry.kind, entry.summary))
+        return 0
+
+    if args.undo:
+        gone = killed.remove(args.undo)
+        if gone is None:
+            print("nothing dismissed matching %r" % args.undo)
+            return 1
+        killed.save()
+        print("back in play: %s" % gone.summary)
+        return 0
+
+    if not args.reason:
+        return _fail("--reason is required: in six weeks you will want to know why")
+    entry = killed.add(EMPLOYER if args.employer else PERSON, args.who,
+                       args.reason, label=args.who)
+    killed.save()
+    print("dismissed %s" % entry.summary)
     return 0
 
 
@@ -853,6 +900,17 @@ def build_parser() -> argparse.ArgumentParser:
     pursuits.add_argument("--all", action="store_true",
                           help="include closed and dormant pursuits")
     pursuits.set_defaults(func=cmd_pursuits)
+
+    dismiss = subparsers.add_parser(
+        "dismiss", help="rule out a person or an employer so they stop coming back")
+    dismiss.add_argument("who", nargs="?",
+                         help="a name, email, LinkedIn URL, or employer name")
+    dismiss.add_argument("--reason", help="why — you will want this later")
+    dismiss.add_argument("--employer", action="store_true",
+                         help="treat the name as an employer rather than a person")
+    dismiss.add_argument("--undo", help="put someone back in play")
+    dismiss.add_argument("--list", action="store_true")
+    dismiss.set_defaults(func=cmd_dismiss)
 
     return parser
 

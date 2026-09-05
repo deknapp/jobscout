@@ -100,15 +100,17 @@ DORMANT_YEARS = 3
 #: Buckets, most actionable first. The bucket decides the message you write, so
 #: they are named for the opening line rather than for the score.
 INSIDE_TARGET = "inside-a-target"
+WARM = "warm-and-overdue"
 MOVED_ON = "moved-on"
 LEVERAGE_BUCKET = "hiring-power"
 DOMAIN = "same-domain"
 REST = "rest"
 
-BUCKET_ORDER = (INSIDE_TARGET, MOVED_ON, LEVERAGE_BUCKET, DOMAIN, REST)
+BUCKET_ORDER = (INSIDE_TARGET, WARM, MOVED_ON, LEVERAGE_BUCKET, DOMAIN, REST)
 
 BUCKET_BLURB = {
     INSIDE_TARGET: "works at an employer you are already chasing",
+    WARM: "you have spoken before, and it has been long enough to speak again",
     MOVED_ON: "met through a shared affiliation, and has since moved elsewhere",
     LEVERAGE_BUCKET: "senior enough in your field to refer or to hire",
     DOMAIN: "in your domain, no other signal",
@@ -394,6 +396,116 @@ def read_export(path: Path) -> List[Connection]:
     return parse_connections_csv(path.read_text(encoding="utf-8", errors="replace"))
 
 
+# --- who you have already talked to ------------------------------------
+
+def profile_key(url: str) -> str:
+    """The stable part of a LinkedIn profile URL.
+
+    Connections.csv and messages.csv both carry the profile URL but format it
+    differently, and it is the only field that survives a person changing their
+    name or their job.
+    """
+    match = re.search(r"/in/([^/?#]+)", (url or "").strip(), re.I)
+    return match.group(1).lower() if match else ""
+
+
+@dataclass
+class Conversation:
+    """What has already passed between you and one person."""
+    name: str = ""
+    url: str = ""
+    sent: int = 0
+    received: int = 0
+    last_sent: str = ""
+    last_received: str = ""
+
+    @property
+    def key(self) -> str:
+        return profile_key(self.url)
+
+    @property
+    def last(self) -> str:
+        return max(self.last_sent, self.last_received)
+
+    @property
+    def two_way(self) -> bool:
+        """They wrote back. An unanswered message is not a relationship."""
+        return self.sent > 0 and self.received > 0
+
+    def days_since(self, today: Optional[dt.date] = None) -> Optional[int]:
+        when = parse_date(self.last[:10])
+        if not when:
+            return None
+        return ((today or dt.date.today()) - when).days
+
+
+def read_conversations(path: Path, me: str = "") -> Dict[str, Conversation]:
+    """Read your message history out of the export.
+
+    This is the half of the picture the connections file cannot give you. A
+    list of people to contact that does not know who you have already contacted
+    is worse than no list: it sends you back to the same names, which is
+    precisely the dead end that makes a long search feel circular.
+    """
+    path = Path(path).expanduser()
+    folder = path if path.is_dir() else path.parent
+    messages = folder / "messages.csv"
+    if not messages.exists():
+        return {}
+
+    csv.field_size_limit(10 ** 7)
+    found: Dict[str, Conversation] = {}
+    with messages.open(encoding="utf-8", errors="replace") as handle:
+        for row in csv.DictReader(handle):
+            sender = (row.get("FROM") or "").strip()
+            recipient = (row.get("TO") or "").strip()
+            when = (row.get("DATE") or "")[:10]
+            if not me:
+                me = sender  # the first row of your own export is your own message
+            outbound = sender == me
+            other_name = recipient if outbound else sender
+            other_url = (row.get("RECIPIENT PROFILE URLS") if outbound
+                         else row.get("SENDER PROFILE URL")) or ""
+            key = profile_key(other_url.split(",")[0])
+            if not key or not other_name:
+                continue
+            entry = found.get(key)
+            if entry is None:
+                entry = Conversation(name=other_name, url=other_url.split(",")[0])
+                found[key] = entry
+            if outbound:
+                entry.sent += 1
+                entry.last_sent = max(entry.last_sent, when)
+            else:
+                entry.received += 1
+                entry.last_received = max(entry.last_received, when)
+    return found
+
+
+def save_conversations(data_dir: Path, conversations: Dict[str, Conversation]) -> Path:
+    path = data_dir / "network" / "conversations.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(
+        {"updated": dt.date.today().isoformat(),
+         "conversations": [asdict(c) for c in conversations.values()]},
+        indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def load_conversations(data_dir: Path) -> Dict[str, Conversation]:
+    path = data_dir / "network" / "conversations.json"
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    fields = set(Conversation.__dataclass_fields__)  # type: ignore[attr-defined]
+    found = {}
+    for item in raw.get("conversations", []):
+        entry = Conversation(**{k: v for k, v in item.items() if k in fields})
+        if entry.key:
+            found[entry.key] = entry
+    return found
+
+
 # --- snapshots -------------------------------------------------------------
 
 def snapshot_path(data_dir: Path, day: Optional[dt.date] = None) -> Path:
@@ -482,6 +594,7 @@ class Lead:
     bucket: str = REST
     anchor: str = ""                 # the affiliation you probably met through
     reasons: List[str] = field(default_factory=list)
+    killed: str = ""
 
     @property
     def name(self) -> str:
@@ -526,10 +639,19 @@ _STOPWORDS = {
 }
 
 
+#: Below this, a message reads as chasing rather than reconnecting.
+TOO_SOON_DAYS = 60
+
+#: Above this, picking a conversation back up is normal rather than awkward.
+OVERDUE_DAYS = 180
+
+
 def rank(connections: Sequence[Connection],
          affiliations: Sequence[Affiliation],
          target_keys: Optional[Dict[str, str]] = None,
          profile: Optional[dict] = None,
+         conversations: Optional[Dict[str, "Conversation"]] = None,
+         killed=None,
          today: Optional[dt.date] = None) -> List[Lead]:
     """Score every connection and sort the interesting ones to the top.
 
@@ -542,6 +664,7 @@ def rank(connections: Sequence[Connection],
     # match nothing at all and the whole view would look empty rather than broken.
     target_keys = {normalize_company(k): v for k, v in (target_keys or {}).items()
                    if normalize_company(k)}
+    conversations = conversations or {}
     terms = set(_domain_terms(profile))
     leads: List[Lead] = []
 
@@ -549,6 +672,18 @@ def rank(connections: Sequence[Connection],
         lead = Lead(connection=connection)
         position = connection.position or ""
         company_key = connection.company_key
+
+        # A lead you have killed stays visible but sinks, with the reason
+        # attached. Deleting it would lose the reason, and hiding it silently
+        # is the thing this tool must never do to someone job hunting.
+        if killed is not None:
+            gone = killed.covers(
+                person_ids=[connection.url, connection.email, connection.name],
+                company=connection.company)
+            if gone is not None:
+                lead.score -= 500
+                lead.killed = gone.reason or "dismissed"
+                lead.reasons.append("you ruled this out: %s" % lead.killed)
 
         # 1. Do they work somewhere you are actively trying to get into?
         target_reason = target_keys.get(company_key)
@@ -597,7 +732,32 @@ def rank(connections: Sequence[Connection],
                 lead.bucket = DOMAIN
             lead.reasons.append("your field: %s" % ", ".join(sorted(overlap)[:3]))
 
-        # 5. Housekeeping signals.
+        # 5. Have you already had this conversation?
+        #
+        # This is the signal that decides whether a list is useful twice. A
+        # name you messaged last week is not a lead, however good the match —
+        # and a name you had a real exchange with two years ago is a far better
+        # one than any stranger, because the introduction is already done.
+        talked = conversations.get(profile_key(connection.url))
+        if talked:
+            days = talked.days_since(today)
+            if days is None:
+                pass
+            elif days < TOO_SOON_DAYS:
+                lead.score -= 30
+                lead.reasons.append("you messaged them %d days ago — let it sit" % days)
+            elif talked.two_way and days >= OVERDUE_DAYS:
+                lead.score += 25
+                if lead.bucket in (REST, DOMAIN, MOVED_ON):
+                    lead.bucket = WARM
+                lead.reasons.append(
+                    "you two actually talked (last %s, %d messages) — warm, and "
+                    "long enough ago to pick up" % (talked.last, talked.sent + talked.received))
+            elif not talked.two_way:
+                lead.score -= 5
+                lead.reasons.append("you wrote on %s and got no reply" % talked.last_sent)
+
+        # 6. Housekeeping signals.
         connected = connection.connected_date
         if connected:
             years = (today - connected).days / 365.25

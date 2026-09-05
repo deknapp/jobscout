@@ -195,6 +195,7 @@ class Message:
     thread_id: str = ""
     date: str = ""
     sender: str = ""
+    to: str = ""
     subject: str = ""
     snippet: str = ""
     body: str = ""
@@ -208,6 +209,11 @@ class Message:
     def domain(self) -> str:
         match = re.search(r"@([\w.\-]+)", self.sender or "")
         return (match.group(1) if match else "").lower()
+
+    @property
+    def counterpart(self) -> str:
+        """The other person's address, whichever direction this went."""
+        return ((self.to if self.from_me else self.sender) or "").strip().lower()
 
     @property
     def text(self) -> str:
@@ -405,6 +411,7 @@ class Outreach:
     company: str = ""
     agency: str = ""
     role: str = ""
+    said_about_place: str = ""
     first_contact: str = ""
     last_contact: str = ""
     replied: bool = False
@@ -505,6 +512,7 @@ def outreach(messages: Sequence[Message]) -> List[Outreach]:
             replied=any(m.from_me for m in thread) or len(thread) > 1,
             messages=len(thread),
             thread_id=thread_id,
+            said_about_place=" ".join((m.body or m.snippet or "") for m in inbound)[:2000],
         )
         for message in thread:
             if _REJECTED.search(message.text):
@@ -540,6 +548,162 @@ def contacts(messages: Sequence[Message]) -> List[Contact]:
     return sorted(found.values(), key=lambda c: c.seen, reverse=True)
 
 
+# --- who you are actually talking to ---------------------------------------
+
+#: Mail hosts that say nothing about where someone works.
+CONSUMER_DOMAINS = {
+    "gmail.com", "googlemail.com", "yahoo.com", "hotmail.com", "outlook.com",
+    "icloud.com", "me.com", "aol.com", "proton.me", "protonmail.com", "live.com",
+    "msn.com", "comcast.net", "mac.com",
+}
+
+#: Relays that stand in for a person rather than being one.
+NOREPLY = re.compile(r"^(no-?reply|donotreply|notifications?|mailer|bounce|"
+                     r"support|info|alerts?|jobs-noreply|.*-noreply)@", re.I)
+
+
+@dataclass
+class Correspondent:
+    """A real human you have exchanged mail with.
+
+    Keyed on the address rather than the name, because the address survives a
+    signature block that spells the name three different ways — and because the
+    domain is the single cheapest statement of where somebody works.
+    """
+    email: str = ""
+    name: str = ""
+    sent: int = 0
+    received: int = 0
+    last_sent: str = ""
+    last_received: str = ""
+    subjects: List[str] = field(default_factory=list)
+
+    @property
+    def domain(self) -> str:
+        return self.email.partition("@")[2].lower()
+
+    @property
+    def company(self) -> str:
+        """The employer implied by the address, when it implies one."""
+        domain = self.domain
+        if not domain or domain in CONSUMER_DOMAINS:
+            return ""
+        stem = domain.rsplit(".", 2)[0] if domain.count(".") > 1 else domain.split(".")[0]
+        return stem.replace("-", " ").title()
+
+    @property
+    def last(self) -> str:
+        return max(self.last_sent, self.last_received)
+
+    @property
+    def two_way(self) -> bool:
+        return self.sent > 0 and self.received > 0
+
+    def days_since(self, today: Optional[dt.date] = None) -> Optional[int]:
+        when = parse_date(self.last[:10])
+        return None if not when else ((today or dt.date.today()) - when).days
+
+
+def correspondents(messages: Sequence[Message], me: str = "") -> List[Correspondent]:
+    """Everyone you have actually exchanged mail with.
+
+    This is the list that stops a networking tool sending you back to people you
+    wrote to last week — which is the failure that makes one useless on its
+    second run.
+    """
+    found: Dict[str, Correspondent] = {}
+    for message in messages:
+        address = message.counterpart
+        if not address or "@" not in address:
+            continue
+        if me and address == me.lower():
+            continue
+        if NOREPLY.match(address) or any(relay in address for relay in RELAY_SENDERS):
+            continue
+        if _ats_kind(message) or classify(message) == ALERT:
+            continue
+        entry = found.get(address)
+        if entry is None:
+            entry = Correspondent(email=address, name=extract_person(message))
+            found[address] = entry
+        if not entry.name:
+            entry.name = extract_person(message)
+        when = (message.date or "")[:10]
+        if message.from_me:
+            entry.sent += 1
+            entry.last_sent = max(entry.last_sent, when)
+        else:
+            entry.received += 1
+            entry.last_received = max(entry.last_received, when)
+        subject = message.clean_subject
+        if subject and subject not in entry.subjects:
+            entry.subjects.append(subject)
+    return sorted(found.values(), key=lambda c: c.last, reverse=True)
+
+
+def within(messages: Sequence[Message], years: float,
+           today: Optional[dt.date] = None) -> List[Message]:
+    """Drop mail older than the window.
+
+    A search moves. Roles from three years ago, and the people who were filling
+    them, say less about today than they cost to read past.
+    """
+    if not years:
+        return list(messages)
+    cutoff = (today or dt.date.today()) - dt.timedelta(days=int(365.25 * years))
+    kept = []
+    for message in messages:
+        when = message.when
+        if when is None or when >= cutoff:
+            kept.append(message)
+    return kept
+
+
+# --- does this role break your location rule --------------------------------
+
+#: Ways a message states where the work happens. Deliberately narrow: this
+#: fires only on an explicit statement, because the alternative — reading a
+#: whole email as if it were a location field — turns any mention of a city
+#: into a geographic restriction.
+_PLACE_STATED = re.compile(
+    r"(?:we(?:'re| are)\s+(?:in|based\s+in)|based\s+in|located\s+in|"
+    r"office\s+in|position\s+in|role\s+is\s+(?:based\s+)?in|"
+    r"on-?site\s+(?:in|at)|in-?person\s+(?:in|at))\s+([^.,;()\n]{2,40})", re.I)
+
+_ONSITE = re.compile(r"\b(on-?site|in-?person|in the office|hybrid)\b", re.I)
+_REMOTE = re.compile(r"\b(remote|work from home|wfh|distributed|remote-first)\b", re.I)
+
+
+def location_warning(text: str, policy) -> str:
+    """Why this role would not work for you, if the mail says plainly enough.
+
+    Returns an empty string unless the message *states* a place you have ruled
+    out. Silence is not evidence: most approaches never say where the work is,
+    and guessing would either bury good roles or wave through bad ones. The
+    honest position is to warn only where the mail is explicit.
+
+    ``policy`` is the same :class:`LocationPolicy` that ``jobscout find``
+    enforces, so the network and the job board answer to one rule.
+    """
+    from .filters import mentions_allowed_place
+
+    if not text or policy is None:
+        return ""
+    places = [match.group(1).strip() for match in _PLACE_STATED.finditer(text)]
+    if not places:
+        return ""
+    if any(mentions_allowed_place(place, policy) for place in places):
+        return ""
+    # A place you cannot reach is only a problem if you would have to be there.
+    onsite = bool(_ONSITE.search(text))
+    remote = bool(_REMOTE.search(text))
+    if remote and not onsite:
+        return ""
+    if not onsite and not remote:
+        return ""
+    return "says %s, which is outside where you will work" % places[0][:40]
+
+
 # --- what to do about it ---------------------------------------------------
 
 #: A conversation that stopped this long ago can be reopened without it reading
@@ -553,11 +717,14 @@ class FollowUp:
     outreach: Outreach
     score: int = 0
     reasons: List[str] = field(default_factory=list)
+    killed: str = ""
 
 
 def follow_ups(inbound: Sequence[Outreach],
                target_keys: Optional[Dict[str, str]] = None,
                applied_keys: Optional[Iterable[str]] = None,
+               policy=None,
+               killed=None,
                today: Optional[dt.date] = None) -> List[FollowUp]:
     """Rank inbound recruiters by who is worth a message this week.
 
@@ -576,6 +743,18 @@ def follow_ups(inbound: Sequence[Outreach],
     for entry in inbound:
         item = FollowUp(outreach=entry)
         key = normalize_company(entry.company)
+
+        if killed is not None:
+            gone = killed.covers(person_ids=[entry.person], company=entry.company)
+            if gone is not None:
+                item.killed = gone.reason or "dismissed"
+                item.score -= 500
+                item.reasons.append("you ruled this out: %s" % item.killed)
+
+        warning = location_warning(entry.said_about_place, policy)
+        if warning:
+            item.score -= 60
+            item.reasons.append(warning)
 
         if key and key in target_keys:
             item.score += 40

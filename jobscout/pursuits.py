@@ -406,8 +406,12 @@ def recommend(pursuit: Pursuit, today: Optional[dt.date] = None) -> Advice:
 
 
 def review(messages: Sequence[Message], llm, today: Optional[dt.date] = None,
-           only: Optional[Iterable[str]] = None) -> List[Advice]:
-    """Read the whole mailbox and say what to do about each live process."""
+           only: Optional[Iterable[str]] = None, killed=None) -> List[Advice]:
+    """Read the whole mailbox and say what to do about each live process.
+
+    An employer you have killed is skipped before the model reads it, so a dead
+    lead costs neither money nor attention.
+    """
     today = today or dt.date.today()
     wanted = {normalize_company(name) for name in (only or []) if name}
     advice: List[Advice] = []
@@ -415,6 +419,8 @@ def review(messages: Sequence[Message], llm, today: Optional[dt.date] = None,
         if wanted and key not in wanted:
             continue
         company = company_of(thread[0]) or key
+        if killed is not None and killed.employer(company) is not None:
+            continue
         for pursuit in read(thread, company, llm, today=today):
             advice.append(recommend(pursuit, today=today))
     advice.sort(key=lambda a: a.sort_key)

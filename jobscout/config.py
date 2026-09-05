@@ -234,6 +234,11 @@ class Settings:
         return self.data_dir / "network"
 
     @property
+    def dismissed_path(self) -> Path:
+        """Leads you have killed. Never in the repo."""
+        return self.data_dir / "dismissed.json"
+
+    @property
     def inbox_dir(self) -> Path:
         """Where a mail ingester leaves its dumps. Never inside the repo."""
         return self.data_dir / "inbox"
