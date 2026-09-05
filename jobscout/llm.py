@@ -10,7 +10,11 @@ Three interchangeable backends:
 
 ``anthropic``
     The Anthropic SDK with ``ANTHROPIC_API_KEY``, the same arrangement
-    covered-call-app uses. Kept as a fallback for machines with no CLI login.
+    covered-call-app uses. Use this when the CLI login has hit its usage
+    limit: a Claude subscription and an API account draw on entirely separate
+    balances, so a run that stops with "usage limit reached" under ``cli`` will
+    go through here. It also gets the hosted web search and web fetch tools, so
+    nothing about discovery is lost — only the billing address changes.
 
 ``mock``
     Deterministic canned answers so the whole pipeline — and the test suite —
@@ -181,42 +185,152 @@ class ClaudeCLIBackend(Backend):
         )
 
 
+# Per-model API differences. The 2026-02-09 server tools carry dynamic
+# filtering and only run on Opus 4.6+ / Sonnet 4.6+; older models take the
+# basic variants. Server-side refusal fallbacks are an Opus 5 / Fable feature.
+# A model that is not listed gets the conservative older shapes.
+_MODEL_CAPS = {
+    "claude-opus-5":    {"tools": "20260209", "fallbacks": True},
+    "claude-opus-4-8":  {"tools": "20260209", "fallbacks": False},
+    "claude-sonnet-5":  {"tools": "20260209", "fallbacks": False},
+    "claude-haiku-4-5": {"tools": "basic", "fallbacks": False},
+}
+_DEFAULT_CAPS = {"tools": "basic", "fallbacks": False}
+
+# USD per million tokens, first-party API rates. Only used to report what a run
+# cost — an unlisted model reports 0.0 rather than a guessed number, because a
+# wrong figure in the budget line is worse than an obviously missing one.
+_PRICES = {
+    "claude-opus-5":    (5.0, 25.0),
+    "claude-opus-4-8":  (5.0, 25.0),
+    "claude-sonnet-5":  (2.0, 10.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-fable-5-1": (10.0, 50.0),
+}
+
+
+def _caps(model: str) -> Dict[str, Any]:
+    return _MODEL_CAPS.get(model, _DEFAULT_CAPS)
+
+
+def _server_tools(caps: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The API-side equivalents of the CLI's WebSearch and WebFetch."""
+    if caps["tools"] == "20260209":
+        search, fetch = "web_search_20260209", "web_fetch_20260209"
+    else:
+        search, fetch = "web_search_20250305", "web_fetch_20250910"
+    return [
+        {"type": search, "name": "web_search", "max_uses": 8},
+        {"type": fetch, "name": "web_fetch", "max_uses": 8},
+    ]
+
+
+def _cost_usd(model: str, usage: Any) -> float:
+    """What this call cost, from the token counts the API reports.
+
+    Cache reads bill at a tenth of the input rate and cache writes at 1.25x;
+    jobscout does not cache today, but the arithmetic is here so the budget
+    line stays honest if it starts to. Web searches bill per search on top of
+    this and are counted separately.
+    """
+    price = _PRICES.get(model)
+    if not price:
+        return 0.0
+    in_rate, out_rate = price
+    got = lambda name: float(getattr(usage, name, 0) or 0)
+    return (got("input_tokens") * in_rate
+            + got("cache_read_input_tokens") * in_rate * 0.1
+            + got("cache_creation_input_tokens") * in_rate * 1.25
+            + got("output_tokens") * out_rate) / 1_000_000.0
+
+
 class AnthropicBackend(Backend):
-    """The Anthropic SDK, using ANTHROPIC_API_KEY (billed to the API account)."""
+    """The Anthropic SDK, billed to your API account rather than a CLI login.
+
+    This is the backend to use once a Claude subscription hits its usage limit:
+    `claude -p` and the API draw on entirely different balances.
+    """
 
     name = "anthropic"
 
     def __init__(self, api_key: Optional[str] = None) -> None:
-        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        if not key:
-            raise LLMError("ANTHROPIC_API_KEY is not set; use JOBSCOUT_BACKEND=cli "
-                           "to bill your Claude CLI login instead.")
         try:
             import anthropic
         except ImportError as exc:  # pragma: no cover - optional dependency
             raise LLMError("the `anthropic` package is not installed "
                            "(pip install anthropic)") from exc
-        self._client = anthropic.Anthropic(api_key=key, timeout=600.0, max_retries=2)
+        self._anthropic = anthropic
+        # An unset ANTHROPIC_API_KEY does not mean there are no credentials —
+        # the SDK also resolves ANTHROPIC_AUTH_TOKEN and an `ant auth login`
+        # profile. So let it look, and report the problem when a call actually
+        # comes back unauthorised, rather than refusing to start.
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        kwargs: Dict[str, Any] = {"timeout": 600.0, "max_retries": 2}
+        if key:
+            kwargs["api_key"] = key
+        self._client = anthropic.Anthropic(**kwargs)
 
     def complete(self, prompt: str, *, model: str, system: str = "",
                  tools: Sequence[str] = (), timeout: int = 600) -> Response:
+        caps = _caps(model)
         kwargs: Dict[str, Any] = {
             "model": model,
-            "max_tokens": 8000,
+            # Room to finish. A truncated reply is unparseable JSON, which
+            # reads downstream as a model failure rather than a short ceiling.
+            "max_tokens": 16000,
             "messages": [{"role": "user", "content": prompt}],
         }
         if system:
             kwargs["system"] = system
         if tools:
-            # The server-side search tool; the SDK runs the loop for us.
-            kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search",
-                                "max_uses": 8}]
-        message = self._client.messages.create(**kwargs)
+            kwargs["tools"] = _server_tools(caps)
+
+        client = self._client.with_options(timeout=float(timeout))
+        try:
+            if caps["fallbacks"]:
+                # If a safety classifier declines, the API re-runs the same
+                # request on a fallback model inside the same call instead of
+                # returning nothing. A decline before any output is not billed.
+                message = client.beta.messages.create(
+                    betas=["server-side-fallback-2026-07-01"],
+                    fallbacks="default", **kwargs)
+            else:
+                message = client.messages.create(**kwargs)
+        except self._anthropic.AuthenticationError as exc:
+            raise LLMError(
+                "the Anthropic API rejected your credentials. Set "
+                "ANTHROPIC_API_KEY in jobscout's .env (console.anthropic.com "
+                "→ API keys), or set JOBSCOUT_BACKEND=cli to bill your Claude "
+                "subscription instead.") from exc
+        except self._anthropic.RateLimitError as exc:
+            raise LLMError("the Anthropic API rate-limited this call; lower "
+                           "JOBSCOUT_MAX_WORKERS or retry shortly") from exc
+        except self._anthropic.APIStatusError as exc:
+            raise LLMError("the Anthropic API failed (HTTP %s): %s"
+                           % (exc.status_code, str(exc)[:400])) from exc
+        except self._anthropic.APIConnectionError as exc:
+            raise LLMError("could not reach the Anthropic API: %s"
+                           % str(exc)[:300]) from exc
+
+        # A refusal is an HTTP 200 with no usable content, so it has to be
+        # checked before reading the blocks or it looks like an empty answer.
+        if message.stop_reason == "refusal":
+            details = getattr(message, "stop_details", None)
+            raise LLMError("the model declined this request (%s): %s" % (
+                getattr(details, "category", None) or "unspecified",
+                getattr(details, "explanation", "") or "no explanation given"))
+        if message.stop_reason == "max_tokens":
+            raise LLMError("the model hit the %d-token output ceiling, so its "
+                           "reply is truncated and cannot be parsed"
+                           % kwargs["max_tokens"])
+
         text = "".join(block.text for block in message.content
                        if getattr(block, "type", "") == "text")
         server_use = getattr(message.usage, "server_tool_use", None)
-        searches = int(getattr(server_use, "web_search_requests", 0) or 0)
-        return Response(text=text, cost_usd=0.0, web_searches=searches)
+        searches = (int(getattr(server_use, "web_search_requests", 0) or 0)
+                    + int(getattr(server_use, "web_fetch_requests", 0) or 0))
+        return Response(text=text, cost_usd=_cost_usd(model, message.usage),
+                        web_searches=searches)
 
 
 class MockBackend(Backend):
