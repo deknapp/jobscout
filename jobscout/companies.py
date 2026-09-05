@@ -40,6 +40,10 @@ class Company:
     last_scanned: str = ""
     postings_found: int = 0
     note: str = ""
+    #: You have written an application to this employer. They are the strongest
+    #: signal in the registry — you have already decided you want to work there
+    #: — so they resolve and scan ahead of anything a model merely proposed.
+    applied_to: bool = False
 
     @property
     def key(self) -> str:
@@ -109,6 +113,9 @@ class Registry:
                 setattr(existing, attr, getattr(company, attr))
         if existing.status == NEW and company.status == RESOLVED:
             existing.status = RESOLVED
+        # One-way: a model proposing an employer you already applied to must not
+        # demote it back out of the priority queue.
+        existing.applied_to = existing.applied_to or company.applied_to
         return existing
 
     def known_names(self) -> List[str]:
@@ -118,11 +125,23 @@ class Registry:
         return [c for c in self.sorted() if c.status != IGNORED]
 
     def needing_resolution(self) -> List[Company]:
-        return [c for c in self.active() if c.status == NEW and not c.careers_url]
+        """Employers with no board yet, the ones you applied to first.
+
+        Resolution is capped per run, so this order decides who gets looked at
+        at all. An employer you have written an application to should never sit
+        behind eighty model guesses in that queue.
+        """
+        pending = [c for c in self.active()
+                   if c.status == NEW and not c.careers_url]
+        return sorted(pending, key=lambda c: (not c.applied_to, c.name.lower()))
 
     def scannable(self, rescan_after_days: int = 3,
                   today: Optional[dt.date] = None) -> List[Company]:
-        """Companies with a known board that we have not read recently."""
+        """Companies with a known board that we have not read recently.
+
+        Same ordering rule as ``needing_resolution``: the slow agent-driven
+        scans are capped per run, so employers you applied to go first.
+        """
         out = []
         for company in self.active():
             if not company.careers_url or company.status == NO_BOARD:
@@ -130,7 +149,7 @@ class Registry:
             age = company.scanned_days_ago(today)
             if age is None or age >= rescan_after_days:
                 out.append(company)
-        return out
+        return sorted(out, key=lambda c: (not c.applied_to, c.name.lower()))
 
     def mark_resolved(self, company: Company, careers_url: str, ats: str = "") -> None:
         company.careers_url = careers_url

@@ -177,6 +177,36 @@ def _parallel(items: Sequence[Any], worker: Callable[[Any], Any],
 
 # --- profile ---------------------------------------------------------------
 
+def seed_applied_employers(registry: Registry, corpus: Optional[Corpus]) -> int:
+    """Put the employers you have already applied to into the registry.
+
+    Their names sit in the applications folder — one sub-folder per company —
+    and until now they were read for profile-building and then thrown away. So
+    a search seeded entirely by a model could, and did, come back without the
+    two employers whose folders it had just read.
+
+    They are only seeded, not resolved: finding the board is still the normal
+    lookup. What they get is a place at the front of the queue.
+    """
+    if not corpus:
+        return 0
+    added = 0
+    for name in corpus.company_names():
+        name = (name or "").strip()
+        if not name:
+            continue
+        before = registry.get(name)
+        registry.add(Company(
+            name=name, applied_to=True,
+            why="you have already written an application to them"))
+        if before is None:
+            added += 1
+    if added:
+        _log("seeded %d employer(s) you have applied to, ahead of the queue"
+             % added)
+    return added
+
+
 def load_or_build_profile(settings: Settings, llm: LLM, corpus: Corpus,
                           refresh: bool = False) -> Dict[str, Any]:
     path = settings.profile_path
@@ -208,7 +238,12 @@ def expand_registry(settings: Settings, llm: LLM, registry: Registry,
     waiting.
     """
     active = registry.active()
-    short = settings.company_target - len(active)
+    # The target counts employers to *discover*. Employers seeded from your
+    # applications folder are ones you brought yourself, so they must not eat
+    # into it — otherwise adding a company you already applied to would
+    # silently shrink the search for new ones.
+    discovered = [c for c in active if not c.applied_to]
+    short = settings.company_target - len(discovered)
     if short <= 0 and not force:
         return 0
 
@@ -217,7 +252,7 @@ def expand_registry(settings: Settings, llm: LLM, registry: Registry,
                            -(-max(short, settings.propose_batch) // len(angles))))
     known = registry.known_names()
     _log("proposing employers from %d angles at once — %d each (%d known, "
-         "aiming for %d)…" % (len(angles), per_angle, len(active),
+         "aiming for %d)…" % (len(angles), per_angle, len(discovered),
                               settings.company_target))
 
     added = 0
@@ -433,7 +468,12 @@ def prefilter(postings: Sequence[Posting], settings: Settings, history: History,
     kept: List[Posting] = []
     dropped: List[Posting] = []
     stats: Dict[str, int] = {"raw": len(postings)}
-    applied_keys = corpus.company_keys() if corpus else set()
+    # Note: applying to one role at an employer is NOT a reason to hide their
+    # other roles. This used to drop every posting from any company in your
+    # applications folder, which silently made the largest employers you care
+    # about — a national lab with hundreds of openings — invisible for good.
+    # Suppression belongs at the level of the individual role, and
+    # `History.seen_before` already does it there.
 
     # Source first, THEN dedupe. The other order lets an aggregator's copy of a
     # role absorb the employer's own listing and take the whole role down with it.
@@ -487,12 +527,6 @@ def prefilter(postings: Sequence[Posting], settings: Settings, history: History,
         if why:
             posting.summary = (posting.summary + "\n\n" + why).strip() \
                 if posting.summary else why
-        if posting.company_key in applied_keys:
-            # The one thing worth skipping: you have already applied here, and
-            # the evidence is sitting in your applications folder.
-            _drop(posting, "you already applied to this employer",
-                  dropped, stats, "dropped_already_applied")
-            continue
         kept.append(posting)
 
     stats["survived_prefilter"] = len(kept)
@@ -587,6 +621,7 @@ def find(settings: Settings, *, refresh_profile: bool = False,
     registry = Registry(settings.companies_path)
     history = History(settings.history_path)
 
+    seed_applied_employers(registry, corpus)
     expand_registry(settings, llm, registry, profile, force=expand)
     resolve_boards(settings, llm, registry)
     upgrade_boards(settings, registry)

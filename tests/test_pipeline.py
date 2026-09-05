@@ -13,6 +13,7 @@ import pytest
 
 from jobscout import fetchers, pipeline
 from jobscout.config import LocationPolicy, Settings
+from jobscout.corpus import load_corpus
 from jobscout.llm import LLM, MockBackend
 from jobscout.models import Posting
 
@@ -222,7 +223,9 @@ def test_roles_from_a_board_api_are_not_re_verified(settings, monkeypatch):
     assert result.stats["live_from_api"] == 1
     # The California role never even reached the pipeline: the location gate ran
     # at the source, for free, on the whole board.
-    assert result.stats["narrowed_at_source"] == 1
+    # 2, not 1: "Some Lab" — the company in the applications fixture — is
+    # seeded into the registry and read alongside the proposed employer.
+    assert result.stats["narrowed_at_source"] == 2
 
     backend = LLM.from_settings(settings).backend
     assert not any("Fetch this URL and tell me" in prompt
@@ -281,8 +284,10 @@ def test_free_boards_are_read_every_run_and_never_capped(settings, monkeypatch):
     settings.company_target = 0         # do not propose more
     pipeline.find(settings, today=TODAY)
 
-    # All 25 API boards read despite being scanned today and despite the cap.
-    assert len(read) == 25
+    # All 25 API boards read despite being scanned today and despite the cap,
+    # plus "Some Lab" from the applications fixture, which is seeded into the
+    # registry because you have applied there.
+    assert len(read) == 26
 
 
 def test_ranking_batches_so_a_big_result_set_still_gets_scored(settings, monkeypatch):
@@ -327,3 +332,70 @@ def test_employers_are_searched_from_several_angles_at_once(settings, monkeypatc
 
     assert len(asked) == len(agents.SEARCH_ANGLES)
     assert len(set(asked)) == len(asked), "each angle must be distinct"
+
+
+def test_employers_you_applied_to_are_seeded_and_go_first(settings):
+    """The applications folder names employers; those names were being dropped.
+
+    A run seeded entirely by the model came back without the two employers
+    whose application folders it had just read to build the profile.
+    """
+    from jobscout.companies import Company, Registry
+
+    registry = Registry(settings.companies_path)
+    for index in range(30):
+        registry.add(Company(name="Proposed Employer %d" % index))
+    registry.save()
+
+    corpus = load_corpus(settings.applications_dir)
+    assert "Some Lab" in corpus.company_names()
+
+    registry = Registry(settings.companies_path)
+    pipeline.seed_applied_employers(registry, corpus)
+
+    seeded = registry.get("Some Lab")
+    assert seeded is not None, "an employer you applied to must be in the registry"
+    assert seeded.applied_to
+
+    # And it is looked up before the thirty the model merely guessed at, since
+    # resolution is capped per run and that queue position decides who is seen.
+    assert registry.needing_resolution()[0].name == "Some Lab"
+
+
+def test_seeded_employers_do_not_shrink_the_search_for_new_ones(settings):
+    """The company target counts employers to discover, not ones you supplied."""
+    from jobscout.companies import Registry
+
+    corpus = load_corpus(settings.applications_dir)
+    registry = Registry(settings.companies_path)
+    pipeline.seed_applied_employers(registry, corpus)
+
+    settings.company_target = 1
+    added = pipeline.expand_registry(
+        settings, LLM(MockBackend(RESPONSES), model_cheap="m", model_strong="M"),
+        registry, {"headline": "x"})
+    assert added > 0, "seeding one employer must not satisfy a target of one"
+
+
+def test_applying_to_one_role_does_not_hide_an_employers_other_roles(settings):
+    """A national lab has hundreds of openings; one application is not all of them.
+
+    jobscout used to drop every posting from any company in the applications
+    folder, which made the employers the candidate cared about most — the ones
+    they had actually applied to — permanently invisible.
+    """
+    from jobscout.history import History
+    from jobscout.models import Posting
+
+    corpus = load_corpus(settings.applications_dir)
+    assert "Some Lab" in corpus.company_names(), "fixture must have an applied-to firm"
+
+    postings = [Posting(company="Some Lab", title="Staff Research Engineer",
+                        location="Albuquerque, NM",
+                        url="https://boards.greenhouse.io/somelab/jobs/1",
+                        posted="2026-09-01")]
+    kept, dropped, stats = pipeline.prefilter(
+        postings, settings, History(settings.history_path), corpus, TODAY,
+        set(), set())
+    assert [p.title for p in kept] == ["Staff Research Engineer"]
+    assert not stats.get("dropped_already_applied")
