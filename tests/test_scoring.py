@@ -129,3 +129,14 @@ def test_a_cap_below_one_still_keeps_the_best_role():
     """A nonsense setting must not silently empty the board."""
     kept, held = best_per_company([_scored("A", "one", 90)], keep=0)
     assert len(kept) == 1 and not held
+
+
+def test_the_held_back_count_reaches_the_report(tmp_path):
+    from jobscout import report
+
+    best = _scored("Benchling", "Data Engineer", 90)
+    best.also_hiring = 4
+    best.url = "https://jobs.ashbyhq.com/benchling/1"
+    best.verified = "live"
+    text = report.render([best], [], {})
+    assert "4 more open role(s) at Benchling" in text

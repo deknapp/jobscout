@@ -647,6 +647,7 @@ function roleCard(r) {
       ${r.likelihood_rationale ? `<p class="note"><b>Your odds:</b> ${esc(r.likelihood_rationale)}</p>` : ""}
       ${r.resembles ? `<p class="note"><b>Closest to:</b> ${esc(r.resembles)}</p>` : ""}
       ${r.concerns ? `<p class="note warn"><b>Worth weighing:</b> ${esc(r.concerns)}</p>` : ""}
+      ${r.also_hiring ? `<p class="note"><b>Also hiring:</b> ${r.also_hiring} more open role${r.also_hiring === 1 ? "" : "s"} at ${esc(r.company)}, all ranked below this one.</p>` : ""}
       <div class="actions">
         <a href="${esc(r.url)}" target="_blank" rel="noreferrer"><button class="primary">Open posting ↗</button></a>
         <button data-act="applied" data-id="${esc(r.id)}">Mark applied</button>

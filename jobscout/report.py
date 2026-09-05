@@ -116,6 +116,10 @@ def render(recommended: Sequence[Posting], dropped: Sequence[Posting],
         if posting.concerns:
             out.append("**Worth weighing:** %s" % posting.concerns)
             out.append("")
+        if posting.also_hiring:
+            out.append("**Also hiring:** %d more open role(s) at %s, all ranked "
+                       "below this one." % (posting.also_hiring, posting.company))
+            out.append("")
 
     if deferred:
         out.append("---")
