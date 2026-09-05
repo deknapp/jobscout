@@ -312,6 +312,15 @@ python3 -m venv .venv
 Python 3.9 or newer. The only hard dependencies are `pypdf` and `python-docx`,
 for reading your application materials.
 
+To run it as just `jobscout` from anywhere, put the venv's entry point on your
+PATH — it has an absolute shebang, so a symlink works from any directory:
+
+```bash
+ln -s "$PWD/.venv/bin/jobscout" ~/.local/bin/jobscout
+```
+
+The install is editable, so this keeps working as you change the code.
+
 ## Connecting Claude
 
 jobscout needs a model that can search and fetch the web. There are two ways to
