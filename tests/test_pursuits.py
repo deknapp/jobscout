@@ -128,7 +128,7 @@ def test_a_stated_structural_blocker_is_not_a_silence_problem():
     you does not change it — the useful move is sideways, to someone who knows
     whether the blocker is real."""
     a = advice_for(stage="interviewing", ball_with="them", last_activity="2026-08-31",
-                   blocker="no requisition posted yet")
+                   people=["Lily", "Ash", "Josh"], blocker="no requisition posted yet")
     assert "ask someone else inside Kestrel" in a.action
     assert "no requisition posted yet" in a.why
     assert a.urgency != "now"
@@ -176,3 +176,82 @@ def test_review_reads_each_employer_once():
     assert len(found) == 1
     assert len(backend.prompts) == 1          # the spam never reached a prompt
     assert "jobs-noreply" not in backend.prompts[0]
+
+
+# --- the relay is not an employer ------------------------------------------
+
+RELAY = "inmail-hit-reply@linkedin.com"
+
+
+def test_two_recruiters_on_one_platform_are_two_pursuits():
+    """Every recruiter on LinkedIn writes from the same address. Filing them by
+    that domain made nine unrelated approaches into one company called
+    "linkedin" — and each then inherited the newest date in the pile, so a June
+    approach was reported as "quiet 0 days" and marked urgent."""
+    first = Message(id="1", thread_id="t1", sender=RELAY, to="me@gmail.com",
+                    date="2026-06-24T00:00:00Z", subject="Opportunity at Kestrel",
+                    body="We are growing our team here at Kestrel Bio.")
+    second = Message(id="2", thread_id="t2", sender=RELAY, to="me@gmail.com",
+                     date="2026-08-20T00:00:00Z", subject="A different role",
+                     body="Hi Nathan, I hope all is well! I just wanted to reach out.")
+    buckets = pursuits.group([first, second])
+    assert len(buckets) == 2
+    assert not any(key == "linkedin" for key in buckets)
+
+
+def test_a_dated_thread_keeps_its_own_dates():
+    old_approach = Message(id="1", thread_id="t1", sender=RELAY, to="me@gmail.com",
+                           date="2026-06-24T00:00:00Z", subject="Old approach",
+                           body="Reaching out about a role.")
+    llm, _ = llm_returning([{"role": "X", "stage": "enquiry", "ball_with": "you"}])
+    found = pursuits.read([old_approach], "Kestrel", llm, today=TODAY)
+    assert found[0].last_activity == "2026-06-24"
+    assert found[0].days_quiet(TODAY) == 73
+
+
+def test_going_sideways_needs_somebody_to_go_sideways_to():
+    """"Ask someone else inside" is not advice you can act on when the only
+    person you know there is the one who told you."""
+    alone = advice_for(stage="interviewing", ball_with="them", people=["Harry"],
+                       last_activity="2026-08-25", blocker="waiting on the client")
+    assert "ask someone else" not in alone.action.lower()
+
+    crowd = advice_for(stage="interviewing", ball_with="them",
+                       people=["Lily", "Ash", "Josh"],
+                       last_activity="2026-08-31", blocker="no requisition posted yet")
+    assert "ask someone else" in crowd.action.lower()
+
+
+def test_each_process_is_dated_by_its_own_messages():
+    """A lab running two searches had both dated by whichever mail arrived last
+    at the lab — so a rejection on one requisition reset the clock on the other,
+    and a code sample sent two weeks ago looked four days old."""
+    thread = [
+        Message(id="1", sender="kim@somelab.gov", to="me@gmail.com",
+                date="2026-08-27T00:00:00Z", subject="Code sample",
+                body="We would like to request a code sample."),
+        Message(id="2", sender="me@gmail.com", to="kim@somelab.gov", from_me=True,
+                date="2026-08-27T01:00:00Z", subject="Re: Code sample",
+                body="Here is a code sample."),
+        Message(id="3", sender="bee@somelab.gov", to="me@gmail.com",
+                date="2026-09-01T00:00:00Z", subject="Interview follow-up",
+                body="We're not going to move forward with an onsite interview."),
+    ]
+    llm, _ = llm_returning([
+        {"role": "CS 3", "requisition": "IRC1", "stage": "assignment",
+         "ball_with": "them", "people": ["Kim"], "messages": [0, 1]},
+        {"role": "CS 2", "requisition": "IRC2", "stage": "closed",
+         "ball_with": "nobody", "people": ["Bee"], "messages": [2]},
+    ])
+    found = {p.requisition: p for p in pursuits.read(thread, "Somelab", llm, today=TODAY)}
+    assert found["IRC1"].last_activity == "2026-08-27"
+    assert found["IRC2"].last_activity == "2026-09-01"
+    assert found["IRC1"].days_quiet(TODAY) == 9
+
+
+def test_an_unusable_message_map_falls_back_to_the_whole_thread():
+    thread = [Message(id="1", sender="a@b.com", to="me@gmail.com",
+                      date="2026-08-01T00:00:00Z", subject="x", body="y")]
+    llm, _ = llm_returning([{"role": "X", "stage": "enquiry", "ball_with": "them",
+                             "messages": ["nonsense", 99]}])
+    assert pursuits.read(thread, "B", llm, today=TODAY)[0].last_activity == "2026-08-01"

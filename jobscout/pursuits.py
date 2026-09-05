@@ -40,8 +40,8 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 from .corpus import normalize_company
 from .inbox import (ALERT, APPLICATION, CONSUMER_DOMAINS, INTERVIEW, Message,
-                    NOREPLY, REJECTION, RELAY_SENDERS, classify, extract_company,
-                    extract_person, _ats_kind)
+                    NOREPLY, REJECTION, RELAY_SENDERS, classify, extract_agency,
+                    extract_company, extract_person, _ats_kind)
 from .models import parse_date
 
 # --- stages ----------------------------------------------------------------
@@ -134,8 +134,15 @@ def company_of(message: Message) -> str:
 
     A person's own domain is worth more than anything the body says: mail from
     ``@lanl.gov`` is LANL even when the sentence reads "our organization".
+
+    A messaging relay is the exception. Every recruiter on LinkedIn writes from
+    the same address, so the domain there names the platform, not an employer —
+    and believing it collapses every unrelated approach into one imaginary
+    company.
     """
     address = message.counterpart
+    if any(relay in address for relay in RELAY_SENDERS):
+        return extract_company(message) or extract_agency(message)
     domain = address.partition("@")[2].lower()
     if domain and domain not in CONSUMER_DOMAINS and not _ats_kind(message):
         stem = re.sub(r"^(mail|email|careers|jobs|talent|hr)\.", "", domain)
@@ -144,28 +151,46 @@ def company_of(message: Message) -> str:
     return extract_company(message)
 
 
+def bucket_key(message: Message) -> str:
+    """Which pile a message belongs in.
+
+    Mail from a company domain groups by employer, because that is what ties
+    Lily's thread to Ash's. Everything else groups by conversation: two
+    recruiters who never named their client are two separate pursuits, not one.
+    """
+    company = normalize_company(company_of(message))
+    if company and not any(relay in message.counterpart for relay in RELAY_SENDERS):
+        return company
+    if company:
+        return company
+    return "thread:%s" % (message.thread_id or message.id)
+
+
 def group(messages: Sequence[Message]) -> Dict[str, List[Message]]:
     """Bucket the mailbox by employer, keeping only what a person wrote."""
     buckets: Dict[str, List[Message]] = {}
     for message in messages:
         if not is_human_mail(message):
             continue
-        company = company_of(message)
-        if not company:
-            continue
-        buckets.setdefault(normalize_company(company), []).append(message)
+        buckets.setdefault(bucket_key(message), []).append(message)
     for thread in buckets.values():
         thread.sort(key=lambda m: m.date or "")
     return buckets
 
 
 def digest(messages: Sequence[Message], max_chars: int = 700) -> str:
-    """A compact, ordered transcript for the model to read."""
+    """A compact, ordered transcript for the model to read.
+
+    Each message is numbered so the model can say which ones belong to which
+    process. That mapping is what keeps a lab's three requisitions apart: dates
+    are taken from the messages a pursuit actually owns, not from whatever
+    arrived last at that employer.
+    """
     lines = []
-    for message in messages:
+    for index, message in enumerate(messages):
         body = re.sub(r"\s+", " ", (message.body or message.snippet or "")).strip()
-        lines.append("[%s] %s (%s)\nSubject: %s\n%s"
-                     % ((message.date or "")[:10],
+        lines.append("#%d [%s] %s (%s)\nSubject: %s\n%s"
+                     % (index, (message.date or "")[:10],
                         "YOU wrote" if message.from_me else "THEY wrote",
                         message.counterpart or "unknown",
                         message.clean_subject, body[:max_chars]))
@@ -202,6 +227,10 @@ Return JSON: a list of objects, one per distinct hiring process, each with:
                  "nobody" if the process is closed
   "blocker":     the stated reason things are not moving, in the employer's own terms,
                  e.g. "no requisition posted yet". "" if none is stated.
+  "messages":    list of the #numbers of the messages belonging to THIS process
+                 and no other. Every message must be assigned to exactly one
+                 process; if a message is general to the employer, put it with
+                 the process it most concerns.
   "evidence":    list of up to 3 objects {"date","who","quote"} — quote copied
                  EXACTLY from the mail, each supporting one of your fields above
 
@@ -244,9 +273,29 @@ def read(messages: Sequence[Message], company: str, llm, today: Optional[dt.date
         )
         if pursuit.ball_with not in (YOU, THEM, NOBODY):
             pursuit.ball_with = THEM
-        _fill_dates(pursuit, messages)
+        owned = _owned(item.get("messages"), messages)
+        pursuit.messages = len(owned)
+        _fill_dates(pursuit, owned)
         found.append(pursuit)
     return found
+
+
+def _owned(indices, messages: Sequence[Message]) -> List[Message]:
+    """The messages the model assigned to one process.
+
+    Falls back to the whole correspondence when the model says nothing useful:
+    a slightly wrong date beats no date, but a date belonging to a different
+    requisition is worse than either, so an explicit answer always wins.
+    """
+    chosen = []
+    for raw in (indices or []):
+        try:
+            index = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= index < len(messages):
+            chosen.append(messages[index])
+    return chosen or list(messages)
 
 
 def _fill_dates(pursuit: Pursuit, messages: Sequence[Message]) -> None:
@@ -316,10 +365,11 @@ def recommend(pursuit: Pursuit, today: Optional[dt.date] = None) -> Advice:
         advice.action = "No dates in this thread — open it before acting."
         return advice
 
-    if pursuit.blocker:
+    if pursuit.blocker and len(pursuit.people) > 1:
         # A stated structural blocker is not a silence problem, and chasing it
         # harder does not move it. This is the Lily Kim case: the honest read is
-        # that there is nothing to chase, and the useful move is sideways.
+        # that there is nothing to chase, and the useful move is sideways — but
+        # only where there is genuinely someone else to move to.
         advice.urgency = "later" if quiet < GONE_QUIET else "this week"
         advice.action = ("Do not chase the blocker — ask someone else inside %s "
                          "whether it is real." % pursuit.company)

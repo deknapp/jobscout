@@ -14,6 +14,7 @@
     jobscout network changes
     jobscout network me --add "Employer" --from 2020-08 --to 2024-05
     jobscout inbox applications | recruiters | contacts
+    jobscout pursuits [--company NAME] [--all]
 """
 from __future__ import annotations
 
@@ -434,11 +435,18 @@ def cmd_network(args: argparse.Namespace) -> int:
     if action == "import":
         connections = net.read_export(Path(args.path))
         path = net.save_snapshot(settings.data_dir, connections)
+        talked = net.read_conversations(Path(args.path))
+        if talked:
+            net.save_conversations(settings.data_dir, talked)
         dated = sum(1 for c in connections if c.connected_date)
         employers = len({c.company_key for c in connections if c.company_key})
         print("read %d connection(s) from %s" % (len(connections), Path(args.path).name))
         print("  %d have a connection date, %d distinct employers" % (dated, employers))
         print("  saved to %s" % redact(path))
+        if talked:
+            two_way = sum(1 for c in talked.values() if c.two_way)
+            print("  read %d conversation(s) you have already had — %d of them two-way"
+                  % (len(talked), two_way))
         older = net.list_snapshots(settings.data_dir)
         if len(older) > 1:
             print("  run `jobscout network changes` to diff against %s" % older[-2].name)
@@ -544,7 +552,8 @@ def cmd_network(args: argparse.Namespace) -> int:
         return 0
 
     # default: leads
-    leads = net.rank(connections, affiliations, targets, profile)
+    leads = net.rank(connections, affiliations, targets, profile,
+                     conversations=net.load_conversations(settings.data_dir))
     if args.bucket:
         leads = [l for l in leads if l.bucket == args.bucket]
     if args.company:
@@ -648,6 +657,64 @@ def cmd_inbox(args: argparse.Namespace) -> int:
                  ", you replied" if entry.replied else ", you never replied"))
         print()
     print("%d inbound approach(es)." % len(ranked))
+    return 0
+
+
+# --- pursuits --------------------------------------------------------------
+
+def cmd_pursuits(args: argparse.Namespace) -> int:
+    from . import inbox as box, pursuits as live
+    from .llm import LLM
+
+    settings = load_settings(require_applications=False)
+    settings.ensure_data_dir()
+    source = Path(args.path).expanduser() if args.path else settings.inbox_dir
+    if not source.exists():
+        return _fail("no mail ingested yet — nothing at %s" % redact(source))
+    messages = box.load_messages(source)
+    if args.since_years:
+        messages = box.within(messages, args.since_years)
+    if not messages:
+        return _fail("no messages in the window")
+
+    llm = LLM.from_settings(settings)
+    only = [args.company] if args.company else None
+    sys.stderr.write("reading %d message(s) across %d employer(s)…\n"
+                     % (len(messages), len(live.group(messages))))
+    advice = live.review(messages, llm, only=only)
+    if not advice:
+        print("nothing live found")
+        return 0
+
+    shown = 0
+    for item in advice:
+        if not args.all and item.urgency == "none":
+            continue
+        shown += 1
+        pursuit = item.pursuit
+        header = pursuit.company
+        if header.startswith("thread:"):
+            header = "(employer not named)"
+        if pursuit.role:
+            header += " — %s" % pursuit.role
+        if pursuit.requisition:
+            header += " (%s)" % pursuit.requisition
+        print("[%s] %s" % (item.urgency.upper(), header))
+        print("    stage %s, ball with %s, quiet %s day(s)"
+              % (pursuit.stage, pursuit.ball_with,
+                 pursuit.days_quiet() if pursuit.days_quiet() is not None else "?"))
+        if pursuit.people:
+            print("    %s" % ", ".join(pursuit.people))
+        print("    DO: %s" % item.action)
+        if item.why:
+            print("    WHY: %s" % item.why)
+        for note in pursuit.evidence[:2]:
+            print("    \"%s\" — %s, %s" % (note.quote[:100], note.who or "?", note.date))
+        print()
+    hidden = len(advice) - shown
+    print("%d live pursuit(s)%s." % (shown, "; %d closed or dormant (--all to see)"
+                                     % hidden if hidden else ""))
+    sys.stderr.write("%s\n" % llm.usage.summary())
     return 0
 
 
@@ -773,7 +840,19 @@ def build_parser() -> argparse.ArgumentParser:
                        help="who approached you, where you applied, or who you met")
     inbox.add_argument("--path", help="a dump file or folder (default: your data dir)")
     inbox.add_argument("--max", type=int, default=25)
+    inbox.add_argument("--since-years", dest="since_years", type=float,
+                       default=0, help="ignore mail older than this")
     inbox.set_defaults(func=cmd_inbox)
+
+    pursuits = subparsers.add_parser(
+        "pursuits", help="what is live in your search, and what to do about each")
+    pursuits.add_argument("--company", help="only this employer")
+    pursuits.add_argument("--path", help="a dump file or folder")
+    pursuits.add_argument("--since-years", type=float, default=2.0,
+                          help="ignore mail older than this (default 2)")
+    pursuits.add_argument("--all", action="store_true",
+                          help="include closed and dormant pursuits")
+    pursuits.set_defaults(func=cmd_pursuits)
 
     return parser
 
