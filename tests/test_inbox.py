@@ -75,13 +75,35 @@ def test_your_own_replies_are_not_counted_as_someone_approaching_you():
 
 # --- recovering the employer's name ----------------------------------------
 
-def test_a_workday_tenant_names_the_employer_in_the_sender_address():
+def test_a_workday_tenant_names_the_employer_when_the_text_will_not():
     """The cheapest signal in the mailbox, and the one most easily missed."""
     m = msg(sender="halcyon@myworkday.com", date="2023-10-17T07:33:19Z",
             subject="Thank you for your interest",
             snippet="Hello Nathan, Thank you for submitting an application for the "
                     "Data Scientist position.")
-    assert inbox.extract_company(m) == "halcyon"
+    assert inbox.extract_company(m) == "Halcyon"
+
+
+def test_the_company_s_own_branding_beats_its_tenant_slug():
+    """`bah@myworkday.com` is Booz Allen and `tbkbank@` is Triumph Financial.
+    The slug is a fallback, not the answer, whenever the text says the name."""
+    m = msg(sender="tbkbank@myworkday.com", date="2024-02-03T16:43:01Z",
+            subject="Thank You for Applying!",
+            snippet="Dear Nathan, Thank you for your interest in Triumph Financial! "
+                    "We have received your application.")
+    assert inbox.extract_company(m) == "Triumph Financial"
+
+
+def test_a_job_title_is_never_returned_as_the_employer():
+    """"your interest in the Software Engineer, Platform role at Benchling"
+    reads exactly like a company name to a regex, and used to return one."""
+    m = msg(sender="no-reply@ashbyhq.com", date="2026-07-17T01:20:13Z",
+            subject="Your Benchling Application | Software Engineer, Platform "
+                    "(Developer Experience)",
+            snippet="Hi Nathaniel, Thank you for your interest in the Software "
+                    "Engineer, Platform (Developer Experience) role at Benchling.")
+    assert inbox.extract_company(m) == "Benchling"
+    assert inbox.extract_role(m) == "Software Engineer, Platform (Developer Experience)"
 
 
 def test_a_multi_tenant_vendor_falls_back_to_the_boilerplate():

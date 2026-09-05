@@ -13,6 +13,7 @@
     jobscout network coverage
     jobscout network changes
     jobscout network me --add "Employer" --from 2020-08 --to 2024-05
+    jobscout inbox applications | recruiters | contacts
 """
 from __future__ import annotations
 
@@ -573,6 +574,72 @@ def cmd_network(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- inbox -----------------------------------------------------------------
+
+def cmd_inbox(args: argparse.Namespace) -> int:
+    from . import inbox as box
+
+    settings = load_settings(require_applications=False)
+    settings.ensure_data_dir()
+    source = Path(args.path).expanduser() if args.path else settings.inbox_dir
+    if not source.exists():
+        return _fail("no mail ingested yet — nothing at %s" % redact(source))
+    messages = box.load_messages(source)
+    if not messages:
+        return _fail("no messages found in %s" % redact(source))
+
+    if args.action == "applications":
+        found = box.applications(messages)
+        if not found:
+            print("no applications recognised in %d message(s)" % len(messages))
+            return 0
+        print("%-30s %-34s %-12s %s" % ("EMPLOYER", "ROLE", "APPLIED", "OUTCOME"))
+        for entry in found:
+            print("%-30s %-34s %-12s %s"
+                  % (entry.company[:30], (entry.role or "—")[:34],
+                     entry.applied or "—", entry.status))
+        silent = [e for e in found if e.status == "no answer"]
+        print("\n%d application(s); %d never answered." % (len(found), len(silent)))
+        return 0
+
+    if args.action == "contacts":
+        found = box.contacts(messages)
+        if not found:
+            print("no named humans recovered")
+            return 0
+        print("%-26s %-28s %-28s %s" % ("NAME", "COMPANY", "HOW YOU KNOW THEM", "LAST SEEN"))
+        for person in found:
+            print("%-26s %-28s %-28s %s"
+                  % (person.name[:26], (person.company or "—")[:28],
+                     person.context[:28], person.seen))
+        return 0
+
+    # default: recruiters, ranked
+    affiliations, targets, names, profile = _network_context(settings)
+    applied = [a.company for a in box.applications(messages)]
+    applied += profile.get("applied_companies", []) or []
+    ranked = box.follow_ups(box.outreach(messages), target_keys=targets,
+                            applied_keys=applied)
+    if args.max:
+        ranked = ranked[:args.max]
+    if not ranked:
+        print("no inbound recruiters found")
+        return 0
+    for item in ranked:
+        entry = item.outreach
+        who = entry.person or "(name not in the headers)"
+        print("%4d  %-24s %s" % (item.score, who[:24],
+                                 (entry.role or entry.company or "—")[:52]))
+        for reason in item.reasons[:3]:
+            print("        - %s" % reason)
+        print("        last contact %s, %d message(s)%s"
+              % (entry.last_contact, entry.messages,
+                 ", you replied" if entry.replied else ", you never replied"))
+        print()
+    print("%d inbound approach(es)." % len(ranked))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jobscout",
@@ -685,6 +752,15 @@ def build_parser() -> argparse.ArgumentParser:
     network.add_argument("--to", dest="until", help="YYYY-MM; omit if you are still there")
     network.add_argument("--kind", default="employer", choices=["employer", "school"])
     network.set_defaults(func=cmd_network)
+
+    inbox = subparsers.add_parser(
+        "inbox", help="reconstruct your search from ingested mail")
+    inbox.add_argument("action", nargs="?", default="recruiters",
+                       choices=["recruiters", "applications", "contacts"],
+                       help="who approached you, where you applied, or who you met")
+    inbox.add_argument("--path", help="a dump file or folder (default: your data dir)")
+    inbox.add_argument("--max", type=int, default=25)
+    inbox.set_defaults(func=cmd_inbox)
 
     return parser
 

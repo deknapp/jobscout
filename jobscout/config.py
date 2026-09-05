@@ -233,6 +233,11 @@ class Settings:
     def network_dir(self) -> Path:
         return self.data_dir / "network"
 
+    @property
+    def inbox_dir(self) -> Path:
+        """Where a mail ingester leaves its dumps. Never inside the repo."""
+        return self.data_dir / "inbox"
+
     def weights(self):
         from .scoring import Weights
 

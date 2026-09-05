@@ -113,10 +113,10 @@ _PITCH = re.compile(
 _END = r"(?:[!.,\n]|\s+(?:and|we|our|for|to|as)\b)"
 
 _COMPANY_PATTERNS = tuple(re.compile(pattern % _END, flags) for pattern, flags in (
+    (r"(?:role|position) (?:at|with) ([A-Z][\w&.'’\- ]{1,48}?)%s", re.I),
     (r"thank(?:s| you) for applying (?:to|for) ([A-Z][\w&.'’\- ]{1,48}?)%s", re.I),
     (r"your (?:recent )?interest in (?:working (?:with|at) )?(?:us at )?"
      r"([A-Z][\w&.'’\- ]{1,48}?)%s", re.I),
-    (r"(?:role|position) at ([A-Z][\w&.'’\- ]{1,48}?)%s", re.I),
     (r"joining (?:the team at |our team at |)([A-Z][\w&.'’\- ]{1,48}?)%s", 0),
     (r"interview with ([A-Z][\w&.'’\- ]{1,48}?)%s", 0),
     (r"application (?:to|for) ([A-Z][\w&.'’\- ]{1,48}?)%s", 0),
@@ -136,6 +136,12 @@ _NOT_A_NAME = {"the", "there", "this", "that", "hope", "just", "thanks", "thank"
                "please", "would", "could", "unfortunately", "apologies", "sorry",
                "looking", "great", "perfect", "absolutely", "hi", "hello", "hey",
                "your", "our", "we", "i", "you", "team", "role", "position", "best"}
+
+#: Words that mean the phrase is a job title, not an employer.
+_LOOKS_LIKE_A_TITLE = re.compile(
+    r"\b(engineer|scientist|developer|manager|director|analyst|architect|"
+    r"specialist|lead|intern|associate|consultant|designer|researcher|"
+    r"technician|administrator|officer|president|position|role)\b", re.I)
 
 #: Subject-line noise LinkedIn adds when a thread continues.
 _SUBJECT_NOISE = re.compile(r"^\s*((re|fwd?|message replied|new message)\s*:\s*)+", re.I)
@@ -218,17 +224,18 @@ def extract_company(message: Message) -> str:
     ``amgen@myworkday.com`` names the employer for free. Everyone else is
     multi-tenant and the name has to be read out of the boilerplate.
     """
-    if _ats_kind(message) == "tenant":
-        local = (message.sender or "").split("@")[0]
-        local = re.sub(r"[._\-]?(no-?reply|donotreply|careers|jobs|talent|hr)$", "", local, flags=re.I)
-        if local and not re.fullmatch(r"(no-?reply|donotreply|info|mail)", local, re.I):
-            return local.replace("_", " ").replace("-", " ").strip()
     for pattern in _COMPANY_PATTERNS:
         match = pattern.search(message.text)
         if match:
             name = _tidy_company(match.group(1))
             if name:
                 return name
+    if _ats_kind(message) == "tenant":
+        local = (message.sender or "").split("@")[0]
+        local = re.sub(r"[._\-]?(no-?reply|donotreply|careers|jobs|talent|hr)$", "",
+                       local, flags=re.I)
+        if local and not re.fullmatch(r"(no-?reply|donotreply|info|mail)", local, re.I):
+            return local.replace("_", " ").replace("-", " ").strip().title()
     return ""
 
 
@@ -239,7 +246,12 @@ def _tidy_company(raw: str) -> str:
     name = name.strip(" ,.!-")
     if len(name) < 2 or len(name) > 48:
         return ""
+    name = re.sub(r"^(?:the|a|an)\s+", "", name, flags=re.I).strip()
     if name.lower() in _NOT_A_NAME:
+        return ""
+    # "your interest in the Software Engineer, Platform role" reads exactly like
+    # a company name to a regex. Job titles are the one thing it must not be.
+    if _LOOKS_LIKE_A_TITLE.search(name):
         return ""
     return name
 
@@ -271,6 +283,16 @@ def extract_role(message: Message) -> str:
         if match:
             role = re.sub(r"\s+", " ", match.group(1)).strip(" -,|")
             if 3 < len(role) < 60:
+                return role
+    for pattern in (
+        re.compile(r"(?:application|apply(?:ing)?|interest in) (?:for |to )?(?:the )?"
+                   r"([\w/&,\-\(\) ]{4,60}?) (?:role|position)", re.I),
+        re.compile(r"for the ([\w/&,\-\(\) ]{4,60}?) (?:role|position)", re.I),
+    ):
+        match = pattern.search(message.text)
+        if match:
+            role = re.sub(r"\s+", " ", match.group(1)).strip(" -,|")
+            if 3 < len(role) < 60 and _LOOKS_LIKE_A_TITLE.search(role):
                 return role
     return ""
 
