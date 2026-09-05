@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .models import Posting
 
@@ -111,6 +111,40 @@ def score_all(postings: Sequence[Posting], weights: Weights,
         posting.percentile = percentile_of(posting.composite, combined)
 
     return sorted(postings, key=lambda p: (-p.composite, p.company.lower()))
+
+
+def best_per_company(postings: Sequence[Posting], keep: int = 1
+                     ) -> Tuple[List[Posting], List[Posting]]:
+    """Keep each employer's best ``keep`` roles; hold the rest back.
+
+    Returns ``(kept, held_back)``, both best-first.
+
+    Nothing in the pipeline used to limit how much of a shortlist one employer
+    could occupy, and the boards are not read on equal terms: a mid-size startup
+    on Ashby hands over its entire board in one request, while a national lab
+    hands over nothing at all. So a single readable employer supplied eleven of
+    forty roles on a real board — not because it was eleven times the best
+    match, but because it was legible.
+
+    The point of the list is which EMPLOYERS are worth an afternoon. Once the
+    best role at one of them is on it, the fourth-best is noise; it is recorded
+    on the survivor as ``also_hiring`` so the count is still there to expand.
+    """
+    kept: List[Posting] = []
+    held: List[Posting] = []
+    best: Dict[str, Posting] = {}
+    counts: Dict[str, int] = {}
+    for posting in postings:            # already sorted best-first
+        key = posting.company_key or posting.company.lower()
+        counts[key] = counts.get(key, 0) + 1
+        if counts[key] <= max(1, keep):
+            kept.append(posting)
+            best.setdefault(key, posting)
+        else:
+            held.append(posting)
+    for key, leader in best.items():
+        leader.also_hiring = max(0, counts.get(key, 0) - max(1, keep))
+    return kept, held
 
 
 def band(percentile: Optional[int], composite_score: float) -> str:

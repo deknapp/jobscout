@@ -93,6 +93,10 @@ class Posting:
     concerns: str = ""
     #: Why a dropped posting was dropped (reporting only).
     rejected_reason: str = ""
+    #: How many further roles at this same employer scored below this one and
+    #: were held back. One employer with a big, readable board could otherwise
+    #: supply a quarter of the shortlist on structure alone.
+    also_hiring: int = 0
 
     @property
     def company_key(self) -> str:

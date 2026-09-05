@@ -164,6 +164,13 @@ class Settings:
     #: (after the free location filter), the board is narrowed by title overlap
     #: before anything expensive happens.
     max_postings_per_company: int = 25
+    #: How many roles at ONE employer may reach the shortlist. The boards are
+    #: not read on equal terms — a startup on Ashby hands over its whole board
+    #: in one request, a national lab hands over nothing — so without a cap the
+    #: most legible employer wins rather than the best one. The question the
+    #: list answers is which employers are worth an afternoon; once the best
+    #: role at one of them is on it, the fourth-best is noise.
+    max_per_company: int = 1
     #: Concurrency for the per-query / per-candidate agent calls.
     max_workers: int = 4
     #: Seconds before a single agent call is abandoned.
@@ -398,6 +405,7 @@ def load_settings(require_applications: bool = True) -> Settings:
         max_verify_per_run=_env_int("JOBSCOUT_MAX_VERIFY_PER_RUN", 20),
         rescan_after_days=_env_int("JOBSCOUT_RESCAN_AFTER_DAYS", 3),
         max_postings_per_company=_env_int("JOBSCOUT_MAX_POSTINGS_PER_COMPANY", 25),
+        max_per_company=_env_int("JOBSCOUT_MAX_PER_COMPANY", 1),
         weight_fit=_env_float("JOBSCOUT_WEIGHT_FIT", 0.45),
         weight_likelihood=_env_float("JOBSCOUT_WEIGHT_LIKELIHOOD", 0.30),
         weight_recency=_env_float("JOBSCOUT_WEIGHT_RECENCY", 0.25),

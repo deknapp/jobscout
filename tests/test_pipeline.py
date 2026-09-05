@@ -132,6 +132,9 @@ def settings(tmp_path, monkeypatch):
 
 
 def test_a_full_run_keeps_only_real_local_fresh_roles(settings):
+    # This is about the hard filters, not about crowding, and the whole fixture
+    # board belongs to one employer — so let both survivors through.
+    settings.max_per_company = 5
     result = pipeline.find(settings, today=TODAY)
 
     titles = sorted(p.title for p in result.recommended)
@@ -163,6 +166,7 @@ def test_a_role_you_have_not_acted_on_keeps_being_offered(settings):
     """
     from jobscout.history import APPLIED, History
 
+    settings.max_per_company = 5   # one fixture employer; crowding is not the point
     first = pipeline.find(settings, today=TODAY)
     assert len(first.recommended) == 2
 

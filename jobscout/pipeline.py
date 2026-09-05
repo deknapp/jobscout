@@ -440,6 +440,19 @@ def scan_boards(settings: Settings, llm: LLM, registry: Registry,
             # while the run continues instead of staying blank until the end.
             on_company(company, found)
     registry.save()
+    # An employer whose board we can reach but which yields nothing, run after
+    # run, is the single most misleading state this tool can be in: it looks
+    # like "they are not hiring" and it usually means "we cannot read them".
+    # A national lab sat at zero for weeks without ever saying so.
+    silent = [c.name for c in targets
+              if c.postings_found == 0 and c.last_scanned]
+    if silent:
+        stats["boards_returning_nothing"] = len(silent)
+        _log("%d board(s) were reachable but returned no roles at all: %s%s"
+             % (len(silent), ", ".join(sorted(silent)[:8]),
+                "" if len(silent) <= 8 else " and %d more" % (len(silent) - 8)))
+        _log("      a board that reports nothing every run is usually one we "
+             "cannot read, not an employer who is not hiring")
     stats["boards_read"] = len(targets)
     stats["boards_via_api"] = via_api
     stats["boards_skipped_slow"] = max(0, len(agent_boards) - settings.max_scans_per_run)
@@ -685,6 +698,15 @@ def find(settings: Settings, *, refresh_profile: bool = False,
         kept, settings.weights(),
         baseline=history.scored_composites(exclude_ids=[p.id for p in kept]),
         today=today)
+    # One employer must not own the shortlist. Boards are not read on equal
+    # terms — a startup on Ashby hands over its whole board in one request, a
+    # national lab hands over nothing — so without this the most LEGIBLE
+    # employer wins rather than the best one.
+    kept, crowded_out = scoring.best_per_company(kept, settings.max_per_company)
+    if crowded_out:
+        _log("held back %d lower-ranked role(s) at employers already on the "
+             "list — the best one at each is what you act on" % len(crowded_out))
+    result.deferred.extend(crowded_out)
     for posting in kept:
         posting.stage = "scored"
     if on_update and kept:

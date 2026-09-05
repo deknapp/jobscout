@@ -139,8 +139,15 @@ class Registry:
                   today: Optional[dt.date] = None) -> List[Company]:
         """Companies with a known board that we have not read recently.
 
-        Same ordering rule as ``needing_resolution``: the slow agent-driven
-        scans are capped per run, so employers you applied to go first.
+        Employers you applied to go first, as in ``needing_resolution``. After
+        those, the ones never read at all, then the ones read longest ago.
+
+        The order matters more than it looks. Agent-driven scans are capped per
+        run, so this decides which boards get READ and which are silently left
+        for next time — and the tie-break used to be the company's NAME, which
+        meant a search whose reach was settled by the alphabet. An employer
+        starting with S waited behind every M and N, run after run, however
+        good a match they were.
         """
         out = []
         for company in self.active():
@@ -149,7 +156,12 @@ class Registry:
             age = company.scanned_days_ago(today)
             if age is None or age >= rescan_after_days:
                 out.append(company)
-        return sorted(out, key=lambda c: (not c.applied_to, c.name.lower()))
+        return sorted(out, key=lambda c: (
+            not c.applied_to,
+            # Never scanned sorts ahead of everything that has been.
+            c.scanned_days_ago(today) is not None,
+            -(c.scanned_days_ago(today) or 0),
+            c.name.lower()))
 
     def mark_resolved(self, company: Company, careers_url: str, ats: str = "") -> None:
         company.careers_url = careers_url
