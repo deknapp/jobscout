@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import http.cookiejar
 import json
 import re
 import urllib.error
@@ -122,9 +123,21 @@ def _iso_date(value: Any) -> str:
             return dt.datetime.utcfromtimestamp(seconds).date().isoformat()
         except (OverflowError, OSError, ValueError):
             return ""
-    text = str(value)
+    text = str(value).strip()
     match = re.match(r"(\d{4})-(\d{2})-(\d{2})", text)
-    return match.group(0) if match else ""
+    if match:
+        return match.group(0)
+    # PeopleSoft writes US-style dates, and an unparsed date is not a neutral
+    # loss: an undated posting is dropped outright when the freshness rule says
+    # so, which would silently empty a board that dates everything it lists.
+    match = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})$", text)
+    if match:
+        month, day, year = (int(g) for g in match.groups())
+        try:
+            return dt.date(year, month, day).isoformat()
+        except ValueError:
+            return ""
+    return ""
 
 
 def _slug(url: str, depth: int = 1) -> str:
@@ -706,6 +719,104 @@ def fetch_dot_jobs(company: str, url: str, context: Dict[str, Any]) -> FetchResu
              % (len(postings), len(entries)))
 
 
+# --- PeopleSoft ------------------------------------------------------------
+#
+# Oracle PeopleSoft runs the careers site of a lot of large public employers,
+# national laboratories among them. It looks unreadable and was treated as such:
+# the landing page is a login form, every guessed search URL bounces back to it,
+# and the agent fallback duly reported an empty board every single run. An
+# employer with fifty open roles in the candidate's own city read as zero, and
+# nothing said so.
+#
+# It is not actually closed. The login redirect sets a guest session cookie, and
+# with that cookie the search page returns its results grid rendered SERVER-SIDE
+# — like iCIMS, and unlike the JavaScript boards. The grid is a flat list of
+# `<span id='FIELD$n'>value</span>`, newest first, which is exactly the order a
+# freshness window wants.
+#
+# Nothing here names an employer. PeopleSoft is recognised by the shape of its
+# own URLs, which is the same at every site that runs it.
+
+#: PeopleSoft's own component name for the careers job search.
+_PS_SEARCH_COMPONENT = "HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL"
+_PS_SEARCH_PAGE = "?Page=HRS_APP_SCHJOB_FL&Action=U"
+#: `/psc/<site>/` or `/psp/<site>/` — the portal and the site it serves.
+_PS_SITE = re.compile(r"/ps[cp]/([A-Za-z0-9_]+)/")
+#: A link to the careers component, wherever it turns up.
+_PS_COMPONENT_LINK = re.compile(
+    r"https?://[^\s\"'<>]+/ps[cp]/[A-Za-z0-9_]+/[^\s\"'<>]*?"
+    + re.escape(_PS_SEARCH_COMPONENT), re.I)
+#: One cell of the results grid: `<span ... id='SCH_JOB_TITLE$0' >text</span>`.
+_PS_CELL = r"id='%s\$(\d+)'\s*>([^<]*)<"
+#: The site id a guest search runs under. Every PeopleSoft careers site uses 1.
+_PS_SITE_ID = 1
+#: Rows the grid renders in one response, newest first.
+_PS_GRID_ROWS = 50
+
+
+def _ps_urls(url: str) -> Tuple[str, str, str]:
+    """``(login, search, detail_template)`` for a PeopleSoft careers site."""
+    host = host_of(url)
+    site_match = _PS_SITE.search(urlsplit(url).path)
+    # Sites overwhelmingly call it "applicant"; take the URL's word for it when
+    # the URL says, and fall back to the convention when it is a bare host.
+    site = site_match.group(1) if site_match else "applicant"
+    root = "https://%s" % host
+    component = "%s/psc/%s/EMPLOYEE/HRMS/c/%s" % (root, site, _PS_SEARCH_COMPONENT)
+    return ("%s/psp/%s/?cmd=login&languageCd=ENG" % (root, site),
+            component + _PS_SEARCH_PAGE,
+            component + "?Page=HRS_APP_JBPST_FL&Action=U&FOCUS=Applicant"
+                        "&SiteId=%d&JobOpeningId=%%s&PostingSeq=1" % _PS_SITE_ID)
+
+
+def _ps_cells(page: str, field: str) -> Dict[int, str]:
+    return {int(row): html.unescape(value).strip()
+            for row, value in re.findall(_PS_CELL % field, page)}
+
+
+def looks_like_peoplesoft(url: str) -> bool:
+    return _PS_SEARCH_COMPONENT.lower() in (url or "").lower()
+
+
+def fetch_peoplesoft(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
+    login, search, detail = _ps_urls(url)
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                             "jobscout/0.1",
+               "Accept": "text/html,application/xhtml+xml"}
+
+    def get(target: str) -> str:
+        request = urllib.request.Request(target, headers=headers)
+        with opener.open(request, timeout=HTML_TIMEOUT) as response:
+            return response.read().decode("utf-8", errors="replace")
+
+    get(login)                      # the redirect is what hands out the cookie
+    page = get(search)
+
+    titles = _ps_cells(page, "SCH_JOB_TITLE")
+    if not titles:
+        return FetchResult(ok=False, note="PeopleSoft returned no results grid — "
+                                          "the site may require a real sign-in")
+    ids = _ps_cells(page, "HRS_APP_JBSCH_I_HRS_JOB_OPENING_ID")
+    places = _ps_cells(page, "LOCATION")
+    opened = _ps_cells(page, "SCH_OPENED")
+
+    postings = []
+    for row in sorted(titles):
+        job_id = ids.get(row, "")
+        postings.append(Posting(
+            company=company, title=titles[row], location=places.get(row, ""),
+            url=detail % job_id if job_id else search,
+            source="PeopleSoft", posted=_iso_date(opened.get(row, ""))))
+    return FetchResult(
+        postings=postings, ats="PeopleSoft",
+        note="%d role(s) from the PeopleSoft grid%s" % (
+            len(postings),
+            "" if len(postings) < _PS_GRID_ROWS else
+            " (its newest %d — older roles need the next page)" % _PS_GRID_ROWS))
+
+
 def discover_ats(url: str) -> str:
     """The ATS board behind a careers page, or "" if there is none.
 
@@ -726,6 +837,15 @@ def discover_ats(url: str) -> str:
 
     if supports(final):
         return final
+    # A PeopleSoft careers site answers a bare host with an Oracle stub whose
+    # only link is the portal component itself — no ATS host to recognise and
+    # nothing for the generic link scan below to match. The link (or the URL we
+    # were redirected to) names the portal and site, which is all the search
+    # URL needs.
+    peoplesoft = _PS_COMPONENT_LINK.search(page) or _PS_COMPONENT_LINK.search(final)
+    if peoplesoft:
+        _login, search, _detail = _ps_urls(peoplesoft.group(0))
+        return search
     for candidate in _ATS_LINK.findall(page):
         cleaned = candidate.rstrip("\"'&;,)")
         # Trim a deep link back to the board itself.
@@ -763,22 +883,42 @@ FETCHERS: Tuple[Tuple[str, Callable[[str, str, Dict[str, Any]], FetchResult]], .
 )
 
 
-def supports(url: str) -> bool:
+#: Boards recognised by the SHAPE of their URL rather than by their host,
+#: because they run on the employer's own domain. Matching PeopleSoft by host
+#: would mean writing individual employers into the shipped code; its component
+#: path is identical everywhere it runs.
+URL_FETCHERS: Tuple[Tuple[Callable[[str], bool],
+                          Callable[[str, str, Dict[str, Any]], FetchResult]], ...] = (
+    (looks_like_peoplesoft, fetch_peoplesoft),
+)
+
+
+def _fetcher_for(url: str) -> Optional[Callable[[str, str, Dict[str, Any]], FetchResult]]:
+    for matches, fetcher in URL_FETCHERS:
+        if matches(url):
+            return fetcher
     host = host_of(url)
-    return any(_host_matches(host, candidate) for candidate, _ in FETCHERS)
+    for candidate, fetcher in FETCHERS:
+        if _host_matches(host, candidate):
+            return fetcher
+    return None
+
+
+def supports(url: str) -> bool:
+    return _fetcher_for(url) is not None
 
 
 def fetch(company: str, url: str,
           context: Optional[Dict[str, Any]] = None) -> Optional[FetchResult]:
     """Read a board directly. ``None`` means "no API for this host, use the agent".
 
-    ``context`` may carry ``titles`` — the candidate's target job titles — which
-    boards that are too big to read whole (Workday) use to drive their own search.
+    ``context`` may carry ``titles`` — short role nouns from the candidate's
+    profile, which boards that are too big to read whole (Workday) and boards
+    read from a sitemap (.jobs) use to drive their own search — and
+    ``max_age_days``, applied before any page fetch is spent.
     """
-    host = host_of(url)
-    for candidate, fetcher in FETCHERS:
-        if not _host_matches(host, candidate):
-            continue
+    fetcher = _fetcher_for(url)
+    if fetcher is not None:
         try:
             return fetcher(company, url, context or {})
         except urllib.error.HTTPError as exc:

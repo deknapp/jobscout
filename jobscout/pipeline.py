@@ -324,10 +324,13 @@ def _scan_one(settings: Settings, llm: LLM, company: Company,
     so the free location filter and a title-overlap trim run here, before the
     postings reach anything that costs money.
     """
-    titles = list(profile.get("target_titles") or []) + \
-        list(profile.get("adjacent_titles") or [])
-    direct = fetchers.fetch(company.name, company.careers_url,
-                            context={"titles": titles})
+    # Boards that take a query get short role nouns, not the written titles.
+    # Handing a board "Senior/Principal R&D AI (Artificial Intelligence)"
+    # verbatim is how a lab with 486 open roles came back with none of them.
+    direct = fetchers.fetch(
+        company.name, company.careers_url,
+        context={"titles": filters.search_terms(profile),
+                 "max_age_days": settings.max_age_days})
     if direct is not None and direct.ok:
         raw = direct.postings
         in_area = []

@@ -3,6 +3,7 @@
 These parse recorded API shapes; nothing here touches the network.
 """
 import datetime as dt
+import urllib.request
 
 import pytest
 
@@ -403,3 +404,113 @@ def test_a_dot_jobs_site_with_no_sitemap_defers_to_the_agent(monkeypatch):
                         lambda url: "<html><body>nothing here</body></html>")
     result = fetchers.fetch("Acme Labs", "https://acme.jobs/", {})
     assert not result.ok, "an unreadable board must fall back, not report zero"
+
+
+# --- PeopleSoft ------------------------------------------------------------
+#
+# The shape below is copied from a real national-lab careers grid: a flat run of
+# `<span id='FIELD$n'>value</span>`, newest first, rendered server-side behind a
+# guest session cookie. Treating this board as unreadable is what made an
+# employer with fifty open roles in the candidate's own city report zero.
+
+def _peoplesoft_grid(rows):
+    cells = []
+    for index, (title, job_id, place, opened) in enumerate(rows):
+        for field, value in (("SCH_JOB_TITLE", title),
+                             ("HRS_APP_JBSCH_I_HRS_JOB_OPENING_ID", job_id),
+                             ("LOCATION", place),
+                             ("SCH_OPENED", opened)):
+            cells.append(
+                "<DIV class='ps_box-edit' id='win0div%s$%d'>"
+                "<span class='ps_box-value' id='%s$%d' >%s</span></DIV>"
+                % (field, index, field, index, value))
+    return "<ul class='ps_grid-body'>" + "".join(cells) + "</ul>"
+
+
+PEOPLESOFT_ROWS = [
+    ("Senior/Principal Fullstack Developer - Emergency Response Software",
+     "698947", "Albuquerque, NM", "09/04/2026"),
+    ("Postdoctoral Appointee - Chemical Dynamics, Onsite",
+     "698992", "Livermore, CA", "09/04/2026"),
+    ("Intern, R&amp;D Graduate Summer - MissionTech, Onsite",
+     "698912", "Albuquerque, NM", "09/03/2026"),
+]
+
+
+def test_a_peoplesoft_board_is_read_from_its_server_rendered_grid(monkeypatch):
+    seen = []
+
+    class _Response:
+        def __init__(self, body):
+            self._body = body.encode("utf-8")
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_open(self, request, timeout=None):
+        seen.append(request.full_url)
+        if "cmd=login" in request.full_url:
+            return _Response("<html>sign in</html>")
+        return _Response(_peoplesoft_grid(PEOPLESOFT_ROWS))
+
+    monkeypatch.setattr("urllib.request.OpenerDirector.open", fake_open)
+    result = fetchers.fetch_peoplesoft(
+        "A Lab", "https://cg.example.gov/psc/applicant/EMPLOYEE/HRMS/c/"
+                 "HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL", {})
+
+    assert result.ok and result.ats == "PeopleSoft"
+    assert len(result.postings) == 3
+    first = result.postings[0]
+    assert first.title.startswith("Senior/Principal Fullstack Developer")
+    assert first.location == "Albuquerque, NM"
+    # A US-style date has to survive: an undated posting is dropped outright
+    # when the freshness rule says so.
+    assert first.posted == "2026-09-04"
+    assert "JobOpeningId=698947" in first.url
+    # The grid is HTML, so its entities have to be unescaped on the way out.
+    assert result.postings[2].title == "Intern, R&D Graduate Summer - MissionTech, Onsite"
+    # The login redirect is what hands out the guest session cookie.
+    assert any("cmd=login" in url for url in seen)
+
+
+class _Stub:
+    def read(self):
+        return b"<html></html>"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_a_board_that_really_needs_a_login_says_so(monkeypatch):
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open",
+                        lambda self, req, timeout=None: _Stub())
+    result = fetchers.fetch_peoplesoft(
+        "A Lab", "https://cg.example.gov/psc/applicant/", {})
+    assert not result.ok
+    assert "sign-in" in result.note
+
+
+def test_peoplesoft_is_recognised_by_url_shape_not_by_employer():
+    """No employer may be named in the shipped code to make its board readable."""
+    search = ("https://cg.example.gov/psc/applicant/EMPLOYEE/HRMS/c/"
+              "HRS_HRAM_FL.HRS_CG_SEARCH_FL.GBL?Page=HRS_APP_SCHJOB_FL&Action=U")
+    assert fetchers.supports(search)
+    assert fetchers.looks_like_peoplesoft(search)
+    assert not fetchers.supports("https://cg.example.gov/")
+
+
+def test_us_style_dates_are_understood():
+    assert fetchers._iso_date("09/04/2026") == "2026-09-04"
+    assert fetchers._iso_date("9/4/2026") == "2026-09-04"
+    assert fetchers._iso_date("2026-09-04T00:00:00Z") == "2026-09-04"
+    assert fetchers._iso_date("13/44/2026") == ""
+    assert fetchers._iso_date("") == ""
