@@ -324,8 +324,9 @@ def test_employers_are_searched_from_several_angles_at_once(settings, monkeypatc
 
     asked = []
 
-    def fake_propose(llm, profile, policy, known, count=25, angle=""):
-        asked.append(angle)
+    def fake_propose(llm, profile, policy, known, count=25, angle="",
+                     geographic=True):
+        asked.append((angle, geographic))
         return [Company(name="Employer %s-%d" % (angle[:6], i)) for i in range(count)]
 
     monkeypatch.setattr(agents, "propose_companies", fake_propose)
@@ -336,6 +337,11 @@ def test_employers_are_searched_from_several_angles_at_once(settings, monkeypatc
 
     assert len(asked) == len(agents.SEARCH_ANGLES)
     assert len(set(asked)) == len(asked), "each angle must be distinct"
+    # Geography constrains where the candidate can SIT, not who is worth
+    # thinking about. Pinning it to every angle narrowed a nationwide remote
+    # search down to the candidate's own state.
+    assert sum(1 for _angle, geographic in asked if geographic) == 1
+    assert any(not geographic for _angle, geographic in asked)
 
 
 def test_employers_you_applied_to_are_seeded_and_go_first(settings):

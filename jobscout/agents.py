@@ -161,40 +161,89 @@ MATERIALS
 #: Five ways of looking for an employer. Asking one general question five times
 #: returns the same famous names five times; asking five different questions
 #: covers the map — and they run at once, so breadth costs no extra waiting.
+#: Each angle looks for a different KIND of employer, and says whether the
+#: candidate's geography is a constraint on it AT ALL.
+#:
+#: It used to be pinned to all five. The full location rule — "non-negotiable",
+#: "a role that fails this is worthless", with the home cities named — was
+#: prepended to every angle including the one whose own text says geography
+#: should not narrow it. So every angle drifted local, and the result was the
+#: worst of both: an employer list crowded with nearby institutions whose
+#: boards could not be read, and a shortlist that ended up 85% remote anyway
+#: because the remote startup boards were the only ones that answered.
+#:
+#: Where an employer sits is a hard filter on POSTINGS, applied deterministically
+#: in filters.py, which is where it belongs. It is not a reason to think about
+#: fewer companies. Local is worth having only when local is good.
 SEARCH_ANGLES = (
-    "Large institutions PHYSICALLY located in the accepted area: national labs, "
-    "federal facilities, universities, hospitals, utilities, state agencies, and "
-    "the defence and engineering contractors that cluster around them.",
+    ("Large institutions PHYSICALLY located in the accepted area: national labs, "
+     "federal facilities, universities, hospitals, utilities, state agencies, and "
+     "the defence and engineering contractors that cluster around them.", True),
 
-    "Remote-first companies anywhere in the country whose core product is in "
-    "this candidate's strongest technical domain. They never need to be near "
-    "the candidate, so geography should not narrow this list at all.",
+    ("Remote-first companies ANYWHERE IN THE COUNTRY whose core product is in "
+     "this candidate's strongest technical domain. Geography is irrelevant here "
+     "and must not narrow the list: where they are headquartered does not "
+     "matter, only that they hire remotely.", False),
 
-    "Companies whose actual product or research matches the candidate's "
-    "differentiators — the unusual combination on their CV, not the generic "
-    "part. Smaller and less famous is fine, and often better.",
+    ("Companies whose actual product or research matches the candidate's "
+     "differentiators — the unusual combination on their CV, not the generic "
+     "part. Smaller and less famous is fine, and often better. Judge them on "
+     "the match alone, wherever they are.", False),
 
-    "Adjacent industries that hire this background without advertising for it "
-    "by name: sectors where the same skills solve a differently-worded problem.",
+    ("Adjacent industries that hire this background without advertising for it "
+     "by name: sectors where the same skills solve a differently-worded "
+     "problem.", False),
 
-    "Startups and scale-ups, both local and remote-first, funded in the last few "
-    "years in this candidate's domains — they hire fast and are missed by every "
-    "list of well-known employers.",
+    ("Startups and scale-ups funded in the last few years in this candidate's "
+     "domains, remote-friendly or in the accepted area. Favour the ones that "
+     "are hard to find: recently funded, still small, no careers-page SEO. "
+     "These are the employers a candidate cannot reach by browsing a big job "
+     "site, which is the whole reason to look this way.", False),
+
+    # Aggregators are never trusted as a source of POSTINGS — the links rot and
+    # the dates lie, which is why sources.py refuses them. As a way of learning
+    # WHICH EMPLOYERS EXIST they are perfectly good, and they surface exactly
+    # the small companies a curated list of famous names never will. The name
+    # is all that is taken; the board is then found and read at the source.
+    ("Employers you can see hiring on startup job boards, funding announcements, "
+     "accelerator and VC portfolio pages, and industry-specific job boards. Use "
+     "these ONLY to learn which companies exist and are hiring — return the "
+     "EMPLOYER NAME, never a link to the aggregator. Prefer companies that do "
+     "not appear on lists of well-known employers.", False),
 )
 
 
 def propose_companies(llm: LLM, profile: Dict[str, Any], policy: LocationPolicy,
                       known: Sequence[str], count: int = 25,
-                      angle: str = "") -> List[Company]:
-    """Name employers who could plausibly hire this candidate, in this geography.
+                      angle: str = "", geographic: bool = True) -> List[Company]:
+    """Name employers who could plausibly hire this candidate.
 
     This is the step that makes the tool work: instead of trawling the open web
     for postings, it decides *who to ask*, and later stages read those employers'
-    own boards.
+    own boards. It is also where quality is actually decided — everything after
+    it can only filter what this returns.
+
+    ``geographic`` says whether the candidate's location constrains THIS angle.
+    Local institutions, yes. Remote-first employers, emphatically not.
     """
     known_block = ", ".join(known) if known else "none yet"
-    prompt = """Given the candidate profile below, propose %d SPECIFIC, REAL employers who
-could plausibly hire this person, and whose jobs would satisfy the location rule.
+    # Only a geography-bound angle gets the location rule. On the others it is
+    # actively wrong: it narrowed a nationwide remote search down to the
+    # candidate's own state, which is not where remote employers are.
+    if geographic:
+        where = _policy_block(policy)
+        opening = ("propose %d SPECIFIC, REAL employers who could plausibly hire "
+                   "this person, and whose jobs would satisfy the location rule.")
+    else:
+        where = ("LOCATION: not a constraint on this list. The candidate does not "
+                 "relocate, so a role must eventually be remote or in their area, "
+                 "but that is checked later against the actual posting. Do NOT "
+                 "narrow this list to employers near them — propose the best "
+                 "employers for this background wherever they are, as long as "
+                 "they hire remotely.")
+        opening = ("propose %d SPECIFIC, REAL employers who could plausibly hire "
+                   "this person.")
+    prompt = ("""Given the candidate profile below, """ + opening + """
 
 %s
 
@@ -209,6 +258,10 @@ Rules:
   * Do NOT repeat any of these, which are already on the list: %s
   * Prefer employers who are plausibly hiring NOW over famous names who are not.
   * Spread the list: do not return 20 national labs or 20 AI startups.
+  * QUALITY OVER QUANTITY. %d is a ceiling, not a quota. A shorter list of
+    employers you would genuinely argue for is worth more than a padded one,
+    and a weak name here costs a board lookup and a scan for nothing. If you
+    can only make a real case for six, return six.
   * For each, say concretely WHY this candidate fits — reference their actual
     skills or domains, not generic praise.
 
@@ -218,16 +271,16 @@ Return ONLY a JSON array:
   {
     "name": "exact legal or common name of the employer",
     "why": "one or two sentences tying THIS candidate's background to THIS employer",
-    "presence": "how they satisfy the location rule stated above — name the actual city/state, or say they are remote-first",
+    "presence": "where they are — name the actual city/state, or say they are remote-first",
     "hiring_signal": "any evidence you saw that they are hiring, or '' if none"
   }
 ]
 
 CANDIDATE PROFILE
 =================
-%s""" % (count, _policy_block(policy),
-         angle or "Any employer who fits the candidate and the location rule.",
-         known_block, json.dumps(profile, indent=2)[:6000])
+%s""") % (count, where,
+          angle or "Any employer who fits this candidate.",
+          known_block, count, json.dumps(profile, indent=2)[:6000])
 
     data = llm.ask_json(prompt, strong=True, system=SYSTEM, web=True)
     if isinstance(data, dict):

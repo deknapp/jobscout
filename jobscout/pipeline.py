@@ -259,9 +259,11 @@ def expand_registry(settings: Settings, llm: LLM, registry: Registry,
     for angle, proposed, error in _parallel(
             angles,
             lambda a: agents.propose_companies(llm, profile, settings.location,
-                                               known, count=per_angle, angle=a),
+                                               known, count=per_angle,
+                                               angle=a[0], geographic=a[1]),
             min(len(angles), max(2, settings.max_workers)),
-            stage="searching for", label=lambda a: a.split(":")[0].split(".")[0][:44],
+            stage="searching for",
+            label=lambda a: a[0].split(":")[0].split(".")[0][:44],
             detail=lambda names: "%d employer(s) proposed" % len(names or [])):
         if error is not None:
             _log("  one angle failed: %s" % str(error)[:120])
