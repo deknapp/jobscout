@@ -453,6 +453,17 @@ def cmd_network(args: argparse.Namespace) -> int:
 
     if action == "me":
         affiliations = net.load_affiliations(settings.affiliations_path)
+        if args.from_export:
+            found = net.read_positions(Path(args.from_export))
+            if not found:
+                return _fail("no Positions.csv or Education.csv under %s"
+                             % redact(Path(args.from_export)))
+            net.save_affiliations(settings.affiliations_path, found)
+            print("read %d affiliation(s) from your export" % len(found))
+            for a in found:
+                print("  %-40s %-9s %s to %s"
+                      % (a.name[:40], a.kind, a.start or "?", a.end or "present"))
+            return 0
         if args.add:
             affiliations = [a for a in affiliations if a.name.lower() != args.add.lower()]
             affiliations.append(net.Affiliation(
@@ -751,6 +762,8 @@ def build_parser() -> argparse.ArgumentParser:
     network.add_argument("--from", dest="since", help="YYYY-MM or YYYY-MM-DD")
     network.add_argument("--to", dest="until", help="YYYY-MM; omit if you are still there")
     network.add_argument("--kind", default="employer", choices=["employer", "school"])
+    network.add_argument("--from-export", dest="from_export",
+                         help="read your own history from the export's Positions.csv")
     network.set_defaults(func=cmd_network)
 
     inbox = subparsers.add_parser(

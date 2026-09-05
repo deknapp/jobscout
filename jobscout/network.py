@@ -55,6 +55,44 @@ _LEVERAGE = re.compile(
 #: a former colleague.
 _RECRUITING = re.compile(r"\b(recruit\w*|talent|sourcer|people ops|hr\b)\b", re.I)
 
+#: Words that appear in hundreds of company names and so identify none of
+#: them. Two employers sharing only these are not the same employer.
+_GENERIC_TOKENS = {
+    "scientific", "sciences", "science", "technologies", "technology", "systems",
+    "solutions", "services", "international", "global", "partners", "holdings",
+    "ventures", "capital", "associates", "consulting", "research", "institute",
+    "university", "college", "school", "energy", "health", "medical", "digital",
+    "software", "data", "company", "corporation", "industries", "enterprises",
+    "america", "usa", "worldwide", "biosciences", "pharmaceuticals", "therapeutics",
+}
+
+
+def same_employer(first: str, second: str) -> bool:
+    """Are these two names the same employer.
+
+    Exact keys are not enough. "OpenEye Scientific" and "OpenEye, Cadence
+    Molecular Sciences" are one job across a rename, and treating them as two
+    breaks every connection made either side of it — the person you met in 2021
+    reads as having moved when neither of you went anywhere.
+
+    The rule: they must share a token that actually identifies a company, and
+    that shared part must account for at least half of the shorter name. A
+    shared "national" or "sciences" buys nothing, which is what keeps Sandia
+    National Laboratories apart from the National Renewable Energy Laboratory.
+    """
+    first_key, second_key = normalize_company(first), normalize_company(second)
+    if not first_key or not second_key:
+        return False
+    if first_key == second_key:
+        return True
+    first_tokens, second_tokens = set(first_key.split()), set(second_key.split())
+    shared = {token for token in first_tokens & second_tokens
+              if token not in _GENERIC_TOKENS and len(token) > 3}
+    if not shared:
+        return False
+    return len(shared) / min(len(first_tokens), len(second_tokens)) >= 0.5
+
+
 #: A connection older than this has almost certainly changed something you do
 #: not know about, whatever their row says.
 DORMANT_YEARS = 3
@@ -144,6 +182,87 @@ def load_affiliations(path: Path) -> List[Affiliation]:
     fields = set(Affiliation.__dataclass_fields__)  # type: ignore[attr-defined]
     return [Affiliation(**{k: v for k, v in item.items() if k in fields})
             for item in items if item.get("name")]
+
+
+#: LinkedIn writes its own dates as "Jun 2024", and leaves the end blank for a
+#: job you still hold.
+def _export_date(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    for fmt in ("%b %Y", "%B %Y", "%Y"):
+        try:
+            return dt.datetime.strptime(value, fmt).date().replace(day=1).isoformat()
+        except ValueError:
+            continue
+    return value
+
+
+def read_positions(path: Path) -> List[Affiliation]:
+    """Read your own history out of the export, instead of asking for it.
+
+    ``Positions.csv`` and ``Education.csv`` are in the same archive as the
+    connections, and they hold exactly the windows the anchor logic needs —
+    with real dates, rather than whatever you can remember. Consecutive spells
+    at one employer are merged: three promotions at the same company is one
+    affiliation, and splitting it would break every connection made across a
+    promotion boundary.
+    """
+    path = Path(path).expanduser()
+    folder = path if path.is_dir() else path.parent
+    found: List[Affiliation] = []
+
+    positions = folder / "Positions.csv"
+    if positions.exists():
+        with positions.open(encoding="utf-8", errors="replace") as handle:
+            for row in csv.DictReader(handle):
+                name = (row.get("Company Name") or "").strip()
+                if not name:
+                    continue
+                found.append(Affiliation(
+                    name=name,
+                    start=_export_date(row.get("Started On", "")),
+                    end=_export_date(row.get("Finished On", "")),
+                    kind="employer"))
+
+    education = folder / "Education.csv"
+    if education.exists():
+        with education.open(encoding="utf-8", errors="replace") as handle:
+            for row in csv.DictReader(handle):
+                name = (row.get("School Name") or "").strip()
+                if not name:
+                    continue
+                found.append(Affiliation(
+                    name=name,
+                    start=_export_date(row.get("Start Date", "")),
+                    end=_export_date(row.get("End Date", "")),
+                    kind="school"))
+
+    return _merge_spells(found)
+
+
+def _merge_spells(affiliations: Sequence[Affiliation]) -> List[Affiliation]:
+    """One employer, one window — however many titles you held there."""
+    merged: Dict[str, Affiliation] = {}
+    for item in affiliations:
+        existing = next((held for held in merged.values()
+                         if held.kind == item.kind
+                         and same_employer(held.name, item.name)), None)
+        if existing is None:
+            merged["%s|%s" % (item.key, item.kind)] = item
+            continue
+        # Keep the longer name: "OpenEye, Cadence Molecular Sciences" says more
+        # than "OpenEye Scientific" about where you actually were.
+        if len(item.name) > len(existing.name):
+            existing.name = item.name
+        starts = [d for d in (existing.start, item.start) if d]
+        existing.start = min(starts) if starts else ""
+        # A blank end means "still there", which outranks any date.
+        if not existing.end or not item.end:
+            existing.end = ""
+        else:
+            existing.end = max(existing.end, item.end)
+    return sorted(merged.values(), key=lambda a: a.start or "")
 
 
 def save_affiliations(path: Path, affiliations: Sequence[Affiliation]) -> None:
@@ -342,7 +461,7 @@ def diff_snapshots(before: Sequence[Connection],
         if previous is None:
             changes.append(Change(connection, "new"))
             continue
-        if previous.company_key != connection.company_key and connection.company:
+        if connection.company and not same_employer(previous.company, connection.company):
             changes.append(Change(connection, "moved",
                                   was_company=previous.company,
                                   was_position=previous.position))
@@ -395,6 +514,15 @@ _STOPWORDS = {
     "manager", "director", "scientist", "with", "and", "the", "for", "from",
     "years", "level", "work", "team", "using", "role", "roles", "into", "over",
     "data", "software", "technical", "systems", "system", "design", "product",
+    # Seniority and recruiting vocabulary. These words appear in every third
+    # job title on the platform, so matching on them said "your field" about a
+    # recruiter at a solar company and a recruiter at Bloomberg alike — and a
+    # list where those outrank a cheminformatics director is a list that has
+    # stopped discriminating.
+    "partner", "partners", "delivery", "talent", "acquisition", "recruiter",
+    "recruiting", "recruitment", "head", "chief", "officer", "associate",
+    "advisor", "consultant", "specialist", "operations", "business", "solutions",
+    "sourcing", "people", "human", "resources", "founding", "founder",
 }
 
 
@@ -438,7 +566,7 @@ def rank(connections: Sequence[Connection],
         anchor = _best_anchor(connection.connected_date, affiliations)
         if anchor:
             lead.anchor = anchor.name
-            if company_key and company_key != anchor.key:
+            if company_key and not same_employer(connection.company, anchor.name):
                 lead.score += 25
                 if lead.bucket == REST:
                     lead.bucket = MOVED_ON

@@ -218,3 +218,45 @@ def test_a_full_archive_without_connections_says_so(tmp_path):
     with pytest.raises(NetworkError) as excinfo:
         net.read_export(archive)
     assert "Connections.csv" in str(excinfo.value)
+
+
+# --- one employer, however they spell it -----------------------------------
+
+def test_a_rename_is_not_two_employers():
+    """OpenEye became "OpenEye, Cadence Molecular Sciences" mid-career. Reading
+    that as two jobs makes everyone met either side of it look like a mover."""
+    assert net.same_employer("OpenEye Scientific", "OpenEye, Cadence Molecular Sciences")
+    assert net.same_employer("Gate Bioscience", "Gate Bioscience, Inc.")
+    assert net.same_employer("Genesis Molecular AI", "Genesis")
+
+
+def test_a_shared_generic_word_is_not_a_shared_employer():
+    """This is the guard that keeps the rule from collapsing every lab and
+    every university into one another."""
+    assert not net.same_employer("Sandia National Laboratories",
+                                 "National Renewable Energy Laboratory")
+    assert not net.same_employer("Broad Institute", "Allen Institute")
+    assert not net.same_employer("Recursion Pharmaceuticals", "Novartis Pharmaceuticals")
+
+
+def test_consecutive_spells_at_one_employer_become_one_window():
+    spells = [Affiliation("OpenEye Scientific", "2020-08-01", "2022-08-01"),
+              Affiliation("OpenEye, Cadence Molecular Sciences", "2022-09-01", "2024-05-01")]
+    merged = net._merge_spells(spells)
+    assert len(merged) == 1
+    assert (merged[0].start, merged[0].end) == ("2020-08-01", "2024-05-01")
+    assert merged[0].name == "OpenEye, Cadence Molecular Sciences"
+
+
+def test_a_job_you_still_hold_has_no_end_date():
+    merged = net._merge_spells([Affiliation("Kestrel Bio", "2020-01-01", "2022-01-01"),
+                                Affiliation("Kestrel Bio", "2022-01-01", "")])
+    assert merged[0].end == ""
+
+
+def test_a_renamed_employer_is_not_reported_as_a_move():
+    before = [Connection(url="https://x/a", first_name="A", last_name="A",
+                         company="OpenEye Scientific", position="Engineer")]
+    after = [Connection(url="https://x/a", first_name="A", last_name="A",
+                        company="OpenEye, Cadence Molecular Sciences", position="Engineer")]
+    assert net.diff_snapshots(before, after) == []
