@@ -627,7 +627,7 @@ def cmd_inbox(args: argparse.Namespace) -> int:
         return 0
     for item in ranked:
         entry = item.outreach
-        who = entry.person or "(name not in the headers)"
+        who = entry.person or "(name unknown)"
         print("%4d  %-24s %s" % (item.score, who[:24],
                                  (entry.role or entry.company or "—")[:52]))
         for reason in item.reasons[:3]:

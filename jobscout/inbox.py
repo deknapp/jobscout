@@ -136,7 +136,24 @@ _NAME_PATTERNS = (
 #: is worth more than any amount of guessing at prose, because it holds even
 #: when the recruiter never introduces themselves — which most of them don't.
 _RELAY_HEADER = re.compile(
-    r"^\s*([A-Z][\w’'\-]+(?:\s+[A-Z][\w’'\-]+){0,2})\s*\n\s*Reply\s*$", re.M)
+    r"^\s*([A-Z][\w’'\-]+(?:\s+[A-Z][\w’'\-]+){0,2})"
+    r"(?:,\s*[A-Za-z.]{2,8})?\s*\n\s*Reply\s*$", re.M)
+
+#: Letters after a name are a credential, not part of it.
+_CREDENTIALS = re.compile(r"\s+(?:MSc|MS|MBA|PhD|PHR|SHRM|CPC|BSc|MA)\.?$", re.I)
+
+#: The employer behind an approach. Tried before the applicant-tracking
+#: patterns for recruiter mail, because "a key need we have here at SandboxAQ"
+#: names the employer and no ATS phrasing will ever match it.
+_HIRING_PATTERNS = (
+    re.compile(r"(?:here|we|role|position|opening)\s+(?:at|with)\s+"
+               r"([A-Z][\w&.'’\- ]{1,40}?)(?:[.,!\n]|\s+(?:and|within|in|for|to)\b)"),
+    re.compile(r"recruiting\s+(?:an?|the)?\s?[\w ]{0,40}?\bfor\s+"
+               r"([A-Z][\w&.'’\- ]{1,40}?)(?:[.,!\n])"),
+    re.compile(r"hiring\s+for\s+([A-Z][\w&.'’\- ]{1,40}?)(?:[.,!\n])"),
+    re.compile(r"(?:Talent Acquisition|Recruit\w*|Engineering)\s+at\s+"
+               r"([A-Z][\w&.'’\- ]{1,40}?)(?:[.,!\n|]|$)", re.M),
+)
 
 #: Who the recruiter works for. An agency name is not the hiring company, but
 #: it is the thing that makes them worth keeping: an agency that placed one
@@ -218,6 +235,8 @@ def classify(message: Message) -> str:
         return INTERVIEW
     if _ats_kind(message) and _APPLIED.search(text):
         return APPLICATION
+    if "inmail-hit-reply@" in sender and not message.from_me:
+        return RECRUITER
     if any(relay in sender for relay in RELAY_SENDERS) and not message.from_me:
         return RECRUITER if _PITCH.search(text) else OTHER
     if _ats_kind(message):
@@ -242,6 +261,13 @@ def extract_company(message: Message) -> str:
     ``amgen@myworkday.com`` names the employer for free. Everyone else is
     multi-tenant and the name has to be read out of the boilerplate.
     """
+    if classify(message) == RECRUITER:
+        for pattern in _HIRING_PATTERNS:
+            match = pattern.search(_unwrap(message.body or message.snippet or ""))
+            if match:
+                name = _tidy_company(match.group(1))
+                if name:
+                    return name
     for pattern in _COMPANY_PATTERNS:
         match = pattern.search(message.text)
         if match:
@@ -284,6 +310,7 @@ def extract_person(message: Message) -> str:
     match = _RELAY_HEADER.search(body)
     if match:
         candidate = match.group(1).strip()
+        candidate = _CREDENTIALS.sub("", candidate).strip()
         if candidate.split()[0].lower() not in _NOT_A_NAME and len(candidate) > 2:
             return candidate
     for pattern in _NAME_PATTERNS:

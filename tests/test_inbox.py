@@ -301,3 +301,26 @@ def test_the_job_is_taken_from_the_subject_not_the_adjective_in_front_of_it():
             subject="Exciting opportunity for an IT Infrastructure role",
             body=RELAY_BODY)
     assert inbox.extract_role(m) == "IT Infrastructure"
+
+
+def test_inmail_is_a_recruiter_approach_by_definition():
+    """InMail is LinkedIn's paid recruiting product — nobody sends one to say
+    hello. Requiring a recognisable pitch on top of that dropped real
+    approaches whose authors opened with flattery instead of a job."""
+    m = msg(sender="inmail-hit-reply@linkedin.com", date="2026-07-21T20:44:40Z",
+            subject="Kestrel Bio / Scientific Software Engineer / Remote friendly",
+            body="Hi Nathan- Interested in your Engineering and bio experience"
+                 "--looks to match up nicely with a key need we have here at "
+                 "Kestrel Bio within our Simulation vertical.")
+    assert inbox.classify(m) == inbox.RECRUITER
+    assert inbox.extract_company(m) == "Kestrel Bio"
+
+
+def test_a_credential_after_a_name_is_not_part_of_the_name():
+    body = ("Subject line\nSubject line\n\n      Greg Taylor, PHR\n        Reply\n"
+            "        https://example.com/\n\nNathan,\n\nI'm recruiting a Software "
+            "Engineer for Kestrel Bio, a frontier AI company.\n")
+    m = msg(sender="inmail-hit-reply@linkedin.com", date="2026-07-27T00:00:00Z",
+            subject="Subject line", body=body)
+    assert inbox.extract_person(m) == "Greg Taylor"
+    assert inbox.extract_company(m) == "Kestrel Bio"
