@@ -149,7 +149,12 @@ class Settings:
     propose_batch: int = 25
     #: Per-run work caps — every one of these is a billed model call, so they are
     #: the dial between "cheap run" and "thorough run".
-    max_resolve_per_run: int = 20
+    #: Board lookup is a cheap-model call with web search, and it is the gate
+    #: everything else waits behind: an employer with no board URL is never
+    #: read, no matter how good a match they are. At 20 a 120-employer target
+    #: takes six runs to even look at everyone once, which is how a run ends up
+    #: reporting three companies.
+    max_resolve_per_run: int = 60
     #: Applies ONLY to boards with no API. Boards with one are read every run.
     max_scans_per_run: int = 8
     max_verify_per_run: int = 20
@@ -374,7 +379,7 @@ def load_settings(require_applications: bool = True) -> Settings:
         max_results=_env_int("JOBSCOUT_MAX_RESULTS", 10),
         company_target=_env_int("JOBSCOUT_COMPANY_TARGET", 120),
         propose_batch=_env_int("JOBSCOUT_PROPOSE_BATCH", 25),
-        max_resolve_per_run=_env_int("JOBSCOUT_MAX_RESOLVE_PER_RUN", 20),
+        max_resolve_per_run=_env_int("JOBSCOUT_MAX_RESOLVE_PER_RUN", 60),
         max_scans_per_run=_env_int("JOBSCOUT_MAX_SCANS_PER_RUN", 8),
         max_verify_per_run=_env_int("JOBSCOUT_MAX_VERIFY_PER_RUN", 20),
         rescan_after_days=_env_int("JOBSCOUT_RESCAN_AFTER_DAYS", 3),

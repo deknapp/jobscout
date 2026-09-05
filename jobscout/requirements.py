@@ -172,7 +172,13 @@ class Requirements:
     #: happens to be in your state can otherwise fill the report with roles you
     #: would never apply for — a DevSecOps lead scoring 14 is not a result, it
     #: is noise wearing the shape of one.
-    min_fit: Optional[int] = None
+    #: Defaulting this to "off" contradicted the paragraph above it. On a real
+    #: run the roles below 35 were an account executive, two sales-enablement
+    #: managers and a mechanical engineer — for which the model's own verdict
+    #: was "wrong function entirely; this is a wasted application" — while
+    #: everything arguable scored 44 and up. 35 is the gap between those two
+    #: groups, and the page exposes it as a slider for when it is wrong.
+    min_fit: Optional[int] = 35
 
     # the two the pipeline already enforced, now with the policy made explicit
     unknown_location: str = EXCLUDE
