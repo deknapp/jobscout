@@ -31,6 +31,7 @@ import html
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -543,7 +544,166 @@ _ATS_LINK = re.compile(
     r"https?://[\w.-]*(?:job-boards\.greenhouse\.io|boards\.greenhouse\.io"
     r"|jobs\.lever\.co|jobs\.ashbyhq\.com|myworkdayjobs\.com"
     r"|jobs\.smartrecruiters\.com|apply\.workable\.com|icims\.com"
-    r"|recruiting\.ultipro\.com)/[\w./%-]*", re.I)
+    r"|recruiting\.ultipro\.com"
+    # The .jobs TLD is restricted to employers, and some use it as their real
+    # board while their own careers page is a brochure. `supports()` still
+    # gates whether anything is done with the link.
+    # Trailing path optional: some careers pages link the bare host.
+    r"|[\w-]+\.jobs)(?:/[\w./%-]*)?", re.I)
+
+
+# --- the national labs, and everything else on a .jobs domain ---------------
+#
+# The .jobs TLD is restricted to employers, and some large ones — national
+# laboratories especially — use it as their real board while their own careers
+# page is a brochure. None of it was readable: there is no Workday tenant to
+# guess at, and the job pages are JavaScript shells the agent fallback reads as
+# empty boards.
+#
+# What these sites do publish is a sitemap of every open role with a `lastmod`
+# date. Some carry the location and title in the path itself
+# (`/<city>-<state>/<role-title>/<id>/job/`), which is enough on its own;
+# others carry only the title and need one page fetch for the location, which
+# the pages give up as schema.org JobPosting JSON-LD. So the date and title
+# filters run against the sitemap for free, and only the survivors cost a
+# request.
+
+_DOT_JOBS_SITEMAPS = ("/sitemap.xml",)
+_SITEMAP_LOC = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.I)
+_SITEMAP_URL = re.compile(r"<url>(.*?)</url>", re.I | re.S)
+_SITEMAP_LASTMOD = re.compile(r"<lastmod>\s*([0-9]{4}-[0-9]{2}-[0-9]{2})", re.I)
+_LDJSON = re.compile(
+    r"<script[^>]*application/ld\+json[^>]*>(.*?)</script>", re.I | re.S)
+#: `/<city>-<state>/<role-title>/<hex id>/job/` — city, two-letter state.
+_DOT_JOBS_PLACE = re.compile(r"^/([a-z][a-z-]+)-([a-z]{2})/", re.I)
+#: Trailing path segments that identify rather than describe. Some sites end
+#: `/<hex>/job/`, others end `/<uuid>`. Either way the title is the last
+#: segment that is not one of these.
+_DOT_JOBS_ID = re.compile(r"^(job|jobs|[0-9a-f]{8,}|[0-9a-f-]{30,}|\d+)$", re.I)
+#: How many survivors are worth one page fetch each. Reached only by roles that
+#: already passed the date and title filters.
+_DOT_JOBS_DETAIL_BUDGET = 40
+
+
+def _titlecase_slug(slug: str) -> str:
+    words = [w for w in slug.replace("_", "-").split("-") if w]
+    return " ".join(w.upper() if len(w) <= 2 and w.isalpha() and w.lower() in
+                    ("hp", "ai", "ml", "qa", "it") else w.capitalize()
+                    for w in words)
+
+
+def _dot_jobs_sitemap_urls(root: str) -> List[Tuple[str, str]]:
+    """Every job URL on a .jobs site, with its last-modified date."""
+    index = _get_html(root.rstrip("/") + "/sitemap.xml")
+    children = [u for u in _SITEMAP_LOC.findall(index)
+                if "page" not in u.rsplit("/", 1)[-1].lower()]
+    if not children:
+        children = [root.rstrip("/") + "/sitemap.xml"]
+    out: List[Tuple[str, str]] = []
+    for child in children[:4]:
+        try:
+            body = _get_html(child)
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+            continue
+        for block in _SITEMAP_URL.findall(body):
+            loc = _SITEMAP_LOC.search(block)
+            if not loc or "/job" not in loc.group(1):
+                continue
+            when = _SITEMAP_LASTMOD.search(block)
+            out.append((loc.group(1), when.group(1) if when else ""))
+    return out
+
+
+def _ldjson_posting(company: str, url: str, page: str) -> Optional[Posting]:
+    for block in _LDJSON.findall(page):
+        try:
+            data = json.loads(block)
+        except ValueError:
+            continue
+        if not isinstance(data, dict) or data.get("@type") != "JobPosting":
+            continue
+        places = data.get("jobLocation")
+        places = places if isinstance(places, list) else [places]
+        where = []
+        for place in places:
+            address = (place or {}).get("address") or {}
+            bits = [address.get("addressLocality"), address.get("addressRegion")]
+            joined = ", ".join(str(b).strip() for b in bits if b)
+            if joined and joined not in where:
+                where.append(joined)
+        return Posting(
+            company=company, title=str(data.get("title") or "").strip(),
+            location="; ".join(where), url=url, source=".jobs",
+            posted=_iso_date(data.get("datePosted")),
+            summary=_plain(data.get("description")))
+    return None
+
+
+def fetch_dot_jobs(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
+    root = "https://" + host_of(url)
+    entries = _dot_jobs_sitemap_urls(root)
+    if not entries:
+        return FetchResult(ok=False, note="no job sitemap on this .jobs site")
+
+    titles = [t.lower() for t in (context.get("titles") or []) if t]
+    max_age = context.get("max_age_days")
+    today = dt.date.today()
+
+    shortlist: List[Tuple[str, str, str, str]] = []   # url, date, title, location
+    for job_url, when in entries:
+        path = urllib.parse.urlparse(job_url).path
+        parts = [p for p in path.split("/") if p]
+        if not parts:
+            continue
+        place_match = _DOT_JOBS_PLACE.match(path)
+        # The title is the last segment that names the role rather than
+        # identifying it: some sites end `/<hex>/job/`, others end `/<uuid>`.
+        descriptive = [seg for seg in parts if not _DOT_JOBS_ID.match(seg)]
+        if place_match and len(descriptive) > 1:
+            descriptive = descriptive[1:]        # drop the leading city-state
+        slug = descriptive[-1] if descriptive else ""
+        if not slug:
+            continue
+        title = _titlecase_slug(slug)
+        location = ("%s, %s" % (_titlecase_slug(place_match.group(1)),
+                                place_match.group(2).upper())
+                    if place_match else "")
+        # Both filters run against the sitemap, before any request is spent.
+        if max_age and when:
+            try:
+                if (today - dt.date.fromisoformat(when)).days > int(max_age):
+                    continue
+            except ValueError:
+                pass
+        if titles and not any(word in title.lower() for word in titles):
+            continue
+        shortlist.append((job_url, when, title, location))
+
+    postings: List[Posting] = []
+    detailed = 0
+    for job_url, when, title, location in shortlist:
+        if location:
+            # The path already said where it is; no request needed.
+            postings.append(Posting(company=company, title=title,
+                                    location=location, url=job_url,
+                                    source=".jobs", posted=when))
+            continue
+        if detailed >= _DOT_JOBS_DETAIL_BUDGET:
+            break
+        detailed += 1
+        try:
+            found = _ldjson_posting(company, job_url, _get_html(job_url))
+        except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError):
+            continue
+        if found and found.title:
+            found.company = company
+            found.posted = found.posted or when
+            postings.append(found)
+
+    return FetchResult(
+        postings=postings, ats=".jobs",
+        note="%d of %d role(s) matched from the .jobs sitemap"
+             % (len(postings), len(entries)))
 
 
 def discover_ats(url: str) -> str:
@@ -595,6 +755,11 @@ FETCHERS: Tuple[Tuple[str, Callable[[str, str, Dict[str, Any]], FetchResult]], .
     ("recruiting.ultipro.com", fetch_ultipro),
     ("breezy.hr", fetch_breezy),
     ("ats.rippling.com", fetch_rippling),
+    # Any employer on the .jobs TLD. Naming individual employers here would put
+    # one person's shortlist in the shipped code; the TLD is restricted to
+    # employers, and a .jobs site without a usable sitemap falls back to the
+    # agent scan like any other unreadable board.
+    ("jobs", fetch_dot_jobs),
 )
 
 

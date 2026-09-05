@@ -311,3 +311,95 @@ def test_rippling_has_no_dates_and_says_so(monkeypatch):
                          context={}).postings[0]
     assert job.location == "Santa Fe, NM"
     assert job.posted == ""
+
+
+# --- .jobs sites: sitemap first, page fetches only for survivors ------------
+
+DOT_JOBS_INDEX = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex><sitemap><loc>https://acme.jobs/sitemaps/jobs_1.xml</loc></sitemap>
+<sitemap><loc>https://acme.jobs/sitemaps/pages.xml</loc></sitemap></sitemapindex>"""
+
+# One with the place in the path, one without — the two shapes seen in the wild.
+DOT_JOBS_LIST = """<?xml version="1.0" encoding="UTF-8"?><urlset>
+<url><loc>https://acme.jobs/springfield-nm/senior-data-engineer/AB12CD34EF56/job/</loc>
+     <lastmod>2026-09-01</lastmod></url>
+<url><loc>https://acme.jobs/springfield-nm/warehouse-forklift-operator/99AA88BB77CC/job/</loc>
+     <lastmod>2026-09-01</lastmod></url>
+<url><loc>https://acme.jobs/springfield-nm/retired-data-engineer/1122334455/job/</loc>
+     <lastmod>2020-01-01</lastmod></url>
+<url><loc>https://acme.jobs/search/jobdetails/staff-data-engineer/4f22308e-1ca4-4eb6-a99d-752a2adda8c4</loc>
+     <lastmod>2026-09-02</lastmod></url>
+</urlset>"""
+
+DOT_JOBS_DETAIL = """<html><head>
+<script type="application/ld+json">
+{"@type": "JobPosting", "title": "Staff Data Engineer",
+ "datePosted": "9/2/2026", "description": "<p>Own the <b>pipelines</b>.</p>",
+ "jobLocation": [{"@type": "Place", "address": {"@type": "PostalAddress",
+   "addressLocality": "Springfield", "addressRegion": "New Mexico"}}]}
+</script></head><body></body></html>"""
+
+
+def _patch_dot_jobs(monkeypatch, detail=DOT_JOBS_DETAIL):
+    pages = {
+        "https://acme.jobs/sitemap.xml": DOT_JOBS_INDEX,
+        "https://acme.jobs/sitemaps/jobs_1.xml": DOT_JOBS_LIST,
+    }
+    fetched = []
+
+    def fake(url):
+        fetched.append(url)
+        if url in pages:
+            return pages[url]
+        if url.startswith("https://acme.jobs/search/jobdetails/"):
+            return detail
+        raise AssertionError("unexpected fetch: %s" % url)
+
+    monkeypatch.setattr(fetchers, "_get_html", fake)
+    return fetched
+
+
+def test_a_dot_jobs_board_is_read_from_its_sitemap(monkeypatch):
+    """The employer's own careers page is a JS shell; the sitemap is not."""
+    fetched = _patch_dot_jobs(monkeypatch)
+    result = fetchers.fetch("Acme Labs", "https://acme.jobs/",
+                            {"max_age_days": 30})
+    assert result.ok
+    assert result.ats == ".jobs"
+    titles = sorted(p.title for p in result.postings)
+    assert titles == ["Senior Data Engineer", "Staff Data Engineer",
+                      "Warehouse Forklift Operator"]
+    # The stale one is dropped from the sitemap's own lastmod, for free.
+    assert "Retired Data Engineer" not in titles
+
+
+def test_a_place_in_the_path_costs_no_request(monkeypatch):
+    """Only roles whose URL does not name a location are worth fetching."""
+    fetched = _patch_dot_jobs(monkeypatch)
+    result = fetchers.fetch("Acme Labs", "https://acme.jobs/",
+                            {"max_age_days": 30})
+    detail_fetches = [u for u in fetched if "/jobdetails/" in u]
+    assert len(detail_fetches) == 1, "one role lacked a location in its path"
+
+    by_title = {p.title: p for p in result.postings}
+    assert by_title["Senior Data Engineer"].location == "Springfield, NM"
+    assert by_title["Senior Data Engineer"].posted == "2026-09-01"
+    # The fetched one gets its location and date from schema.org JSON-LD.
+    assert by_title["Staff Data Engineer"].location == "Springfield, New Mexico"
+    assert by_title["Staff Data Engineer"].posted == "2026-09-02"
+    assert "pipelines" in by_title["Staff Data Engineer"].summary
+
+
+def test_titles_narrow_the_sitemap_before_anything_is_fetched(monkeypatch):
+    fetched = _patch_dot_jobs(monkeypatch)
+    result = fetchers.fetch("Acme Labs", "https://acme.jobs/",
+                            {"max_age_days": 30, "titles": ["forklift"]})
+    assert [p.title for p in result.postings] == ["Warehouse Forklift Operator"]
+    assert not [u for u in fetched if "/jobdetails/" in u]
+
+
+def test_a_dot_jobs_site_with_no_sitemap_defers_to_the_agent(monkeypatch):
+    monkeypatch.setattr(fetchers, "_get_html",
+                        lambda url: "<html><body>nothing here</body></html>")
+    result = fetchers.fetch("Acme Labs", "https://acme.jobs/", {})
+    assert not result.ok, "an unreadable board must fall back, not report zero"
