@@ -39,7 +39,10 @@ def parse_date(value: Any) -> Optional[dt.date]:
     if isinstance(value, dt.date):
         return value
     text = str(value).strip()
-    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%b %d, %Y", "%B %d, %Y", "%Y-%m"):
+    # "14 Mar 2021" is how LinkedIn writes a connection date; the rest are what
+    # job boards and models emit.
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%m/%d/%y", "%b %d, %Y",
+                "%B %d, %Y", "%d %b %Y", "%d %B %Y", "%Y-%m"):
         try:
             return dt.datetime.strptime(text, fmt).date()
         except ValueError:

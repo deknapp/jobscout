@@ -8,6 +8,11 @@
     jobscout serve [--port 8765]
     jobscout history [--status recommended]
     jobscout mark <id> --applied | --dismissed [--note "..."]
+    jobscout network import <export.zip|Connections.csv|folder>
+    jobscout network leads [--bucket moved-on] [--max 40]
+    jobscout network coverage
+    jobscout network changes
+    jobscout network me --add "Employer" --from 2020-08 --to 2024-05
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ from .corpus import load_corpus, summarize
 from .history import APPLIED, DISMISSED, History, RECOMMENDED
 from .llm import LLMError
 from .models import Posting
+from .network import BUCKET_ORDER as NETWORK_BUCKETS
 from .pipeline import find as run_find, load_or_build_profile
 
 ENV_TEMPLATE = """# jobscout configuration. This file is git-ignored — keep it that way.
@@ -377,6 +383,196 @@ def cmd_mark(args: argparse.Namespace) -> int:
 
 # --- parser ----------------------------------------------------------------
 
+# --- network ---------------------------------------------------------------
+
+def _network_context(settings):
+    """Everything the ranking needs, gathered from what jobscout already knows."""
+    from .network import load_affiliations
+
+    affiliations = load_affiliations(settings.affiliations_path)
+    registry = Registry(settings.companies_path)
+    targets = {}
+    names = {}
+    for company in registry.sorted():
+        if company.status == IGNORED or not company.key:
+            continue
+        targets[company.key] = "tracked"
+        names[company.key] = company.name
+    profile = {}
+    if settings.profile_path.exists():
+        try:
+            profile = json.loads(settings.profile_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            profile = {}
+    # An employer you have actually written to outranks one merely on the list.
+    from .corpus import normalize_company
+    for name in profile.get("applied_companies", []) or []:
+        key = normalize_company(name)
+        if key:
+            targets[key] = "applied"
+            names.setdefault(key, name)
+    return affiliations, targets, names, profile
+
+
+def _latest_connections(settings):
+    from .network import list_snapshots, load_snapshot
+
+    snapshots = list_snapshots(settings.data_dir)
+    if not snapshots:
+        return [], None
+    return load_snapshot(snapshots[-1]), snapshots[-1]
+
+
+def cmd_network(args: argparse.Namespace) -> int:
+    from . import network as net
+
+    settings = load_settings(require_applications=False)
+    settings.ensure_data_dir()
+    action = args.action
+
+    if action == "import":
+        connections = net.read_export(Path(args.path))
+        path = net.save_snapshot(settings.data_dir, connections)
+        dated = sum(1 for c in connections if c.connected_date)
+        employers = len({c.company_key for c in connections if c.company_key})
+        print("read %d connection(s) from %s" % (len(connections), Path(args.path).name))
+        print("  %d have a connection date, %d distinct employers" % (dated, employers))
+        print("  saved to %s" % redact(path))
+        older = net.list_snapshots(settings.data_dir)
+        if len(older) > 1:
+            print("  run `jobscout network changes` to diff against %s" % older[-2].name)
+        else:
+            print("  this is your baseline — export again in a month and "
+                  "`jobscout network changes` will name everyone who moved")
+        if not settings.affiliations_path.exists():
+            print("\nnext: tell it where you have worked, so it can work out how you\n"
+                  "met people and who has moved on since:\n"
+                  '  jobscout network me --add "Employer" --from 2020-08 --to 2024-05')
+        return 0
+
+    if action == "me":
+        affiliations = net.load_affiliations(settings.affiliations_path)
+        if args.add:
+            affiliations = [a for a in affiliations if a.name.lower() != args.add.lower()]
+            affiliations.append(net.Affiliation(
+                name=args.add, start=args.since, end=args.until, kind=args.kind))
+            net.save_affiliations(settings.affiliations_path, affiliations)
+            print("recorded %s (%s, %s to %s)"
+                  % (args.add, args.kind, args.since or "?", args.until or "present"))
+            return 0
+        if args.remove:
+            kept = [a for a in affiliations if a.name.lower() != args.remove.lower()]
+            if len(kept) == len(affiliations):
+                print("no affiliation named %s" % args.remove)
+                return 1
+            net.save_affiliations(settings.affiliations_path, kept)
+            print("removed %s" % args.remove)
+            return 0
+        if not affiliations:
+            print("no history recorded yet. Add one:")
+            print('  jobscout network me --add "Employer" --from 2020-08 --to 2024-05')
+            return 0
+        print("%-38s %-10s %-10s %s" % ("AFFILIATION", "KIND", "FROM", "TO"))
+        for a in sorted(affiliations, key=lambda x: x.start or ""):
+            print("%-38s %-10s %-10s %s"
+                  % (a.name[:38], a.kind, a.start or "?", a.end or "present"))
+        return 0
+
+    connections, snapshot = _latest_connections(settings)
+    if not connections:
+        return _fail("no connections imported yet — "
+                     "`jobscout network import <your export>` first")
+    affiliations, targets, names, profile = _network_context(settings)
+
+    if action == "coverage":
+        rows = net.company_coverage(connections, targets, names)
+        have = [r for r in rows if r[1]]
+        print("Employers you are chasing, and who you already know inside them")
+        print("(%d of %d have someone)\n" % (len(have), len(rows)))
+        for name, people in rows:
+            if not people:
+                continue
+            print("%s — %d" % (name, len(people)))
+            for person in people[:6]:
+                print("    %-28s %s" % (person.name[:28], (person.position or "")[:44]))
+            if len(people) > 6:
+                print("    ... and %d more" % (len(people) - 6))
+            print()
+        cold = [name for name, people in rows if not people]
+        if cold:
+            print("No path in (cold application territory): %s"
+                  % ", ".join(sorted(cold)[:20]))
+        return 0
+
+    if action == "changes":
+        snapshots = net.list_snapshots(settings.data_dir)
+        if len(snapshots) < 2:
+            print("only one export so far (%s) — nothing to diff against yet."
+                  % snapshots[0].name)
+            print("Export again in a few weeks; job changes fall out of the diff.")
+            return 0
+        before = net.load_snapshot(snapshots[-2])
+        changes = net.diff_snapshots(before, connections)
+        moved = [c for c in changes if c.kind == "moved"]
+        promoted = [c for c in changes if c.kind == "promoted"]
+        fresh = [c for c in changes if c.kind == "new"]
+        print("%s → %s\n" % (snapshots[-2].name, snapshots[-1].name))
+        for label, group in (("Changed employer", moved), ("New title", promoted),
+                             ("New connections", fresh)):
+            if not group:
+                continue
+            print("%s (%d)" % (label, len(group)))
+            for change in group[:args.max]:
+                print("  %-26s %s" % (change.connection.name[:26], change.summary))
+            print()
+        if moved:
+            print("Anyone in the first list is worth a note this week — a job "
+                  "change is the one moment\ncold-sounding outreach reads as "
+                  "congratulations.")
+        return 0
+
+    # default: leads
+    leads = net.rank(connections, affiliations, targets, profile)
+    if args.bucket:
+        leads = [l for l in leads if l.bucket == args.bucket]
+    if args.company:
+        from .corpus import normalize_company
+        key = normalize_company(args.company)
+        leads = [l for l in leads if l.connection.company_key == key]
+    if not args.all:
+        leads = [l for l in leads if l.bucket != net.REST]
+    shown = leads[:args.max]
+    if not shown:
+        print("nothing matched")
+        return 0
+
+    if not affiliations:
+        sys.stderr.write(
+            "note: no work history recorded, so nobody can be identified as "
+            "having moved on.\n      jobscout network me --add \"Employer\" "
+            "--from YYYY-MM --to YYYY-MM\n\n")
+
+    grouped = net.by_bucket(shown)
+    for bucket in net.BUCKET_ORDER:
+        people = grouped.get(bucket) or []
+        if not people:
+            continue
+        print("== %s — %s (%d)" % (bucket, net.BUCKET_BLURB[bucket], len(people)))
+        for lead in people:
+            connection = lead.connection
+            print("  %3d  %-26s %s"
+                  % (lead.score, connection.name[:26],
+                     ("%s @ %s" % (connection.position or "?",
+                                   connection.company or "?"))[:60]))
+            for reason in lead.reasons[:3]:
+                print("       - %s" % reason)
+            if connection.url:
+                print("       %s" % connection.url)
+        print()
+    print("%d shown of %d connection(s)." % (len(shown), len(connections)))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jobscout",
@@ -470,6 +666,25 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--dismissed", action="store_true")
     mark.add_argument("--note", default="")
     mark.set_defaults(func=cmd_mark)
+
+    network = subparsers.add_parser(
+        "network", help="rank your own LinkedIn export for who to reach out to")
+    network.add_argument("action", nargs="?", default="leads",
+                         choices=["import", "leads", "coverage", "changes", "me"],
+                         help="import an export, rank leads, show target-employer "
+                              "coverage, diff two exports, or edit your own history")
+    network.add_argument("path", nargs="?", help="the export (import only)")
+    network.add_argument("--bucket", choices=list(NETWORK_BUCKETS))
+    network.add_argument("--company", help="only people at this employer")
+    network.add_argument("--max", type=int, default=40)
+    network.add_argument("--all", action="store_true",
+                         help="include connections with no signal at all")
+    network.add_argument("--add", help="record an employer or school you were at")
+    network.add_argument("--remove", help="forget one")
+    network.add_argument("--from", dest="since", help="YYYY-MM or YYYY-MM-DD")
+    network.add_argument("--to", dest="until", help="YYYY-MM; omit if you are still there")
+    network.add_argument("--kind", default="employer", choices=["employer", "school"])
+    network.set_defaults(func=cmd_network)
 
     return parser
 

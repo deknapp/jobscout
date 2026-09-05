@@ -212,6 +212,20 @@ class Settings:
     def requirements_path(self) -> Path:
         return self.data_dir / "requirements.json"
 
+    @property
+    def affiliations_path(self) -> Path:
+        """Your own employment and education history.
+
+        The network view needs it to work out how you met someone, and it is
+        person-specific, so it lives with the rest of your data and never in
+        the repo.
+        """
+        return self.data_dir / "affiliations.json"
+
+    @property
+    def network_dir(self) -> Path:
+        return self.data_dir / "network"
+
     def weights(self):
         from .scoring import Weights
 
