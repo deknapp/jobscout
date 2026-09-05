@@ -246,10 +246,15 @@ def read(messages: Sequence[Message], company: str, llm, today: Optional[dt.date
     today = today or dt.date.today()
     if not messages:
         return []
+    # The strong model, deliberately. Splitting one employer's correspondence
+    # into separate processes is the judgment this module turns on, and the
+    # cheap model is not stable at it: across two runs on the same mailbox it
+    # filed a rejection under a different requisition each time. There are only
+    # a few dozen calls in a run, so the accuracy is worth the money.
     payload = llm.ask_json(PROMPT % {"today": today.isoformat(),
                                      "company": company,
                                      "digest": digest(messages)},
-                           system=SYSTEM)
+                           system=SYSTEM, strong=True)
     if isinstance(payload, dict):
         payload = [payload]
     found: List[Pursuit] = []
