@@ -271,8 +271,10 @@ class App:
         postings = board.postings()
         # Re-score live: the sliders change the weights, not the stored fit and
         # likelihood, so ranking is instant and costs nothing.
-        ranked = scoring.score_all(postings, weights,
-                                   baseline=history.scored_composites())
+        ranked = scoring.score_all(
+            postings, weights,
+            baseline=history.scored_composites(
+                exclude_ids=[p.id for p in postings]))
         roles = []
         for posting in ranked:
             record = posting.to_dict()

@@ -15,7 +15,7 @@ import datetime as dt
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Collection, Dict, Iterable, List, Optional, Tuple
 
 from .models import Posting
 
@@ -244,11 +244,19 @@ class History:
     def by_status(self, status: str) -> List[Entry]:
         return [e for e in self.entries if e.status == status]
 
-    def scored_composites(self) -> List[float]:
+    def scored_composites(self, exclude_ids: Collection[str] = ()) -> List[float]:
         """Every composite score ever assigned — the percentile baseline.
 
         Only scored entries count. Postings dropped by a hard filter never
         reached the ranking agent, and folding their zeroes in would inflate
         every percentile.
+
+        ``exclude_ids`` drops the roles about to be ranked. They are already in
+        here from the run that first scored them, and counting a role a second
+        time as part of its own baseline doubles the apparent sample size —
+        which is exactly the number the "too few samples to be meaningful"
+        guard is checking.
         """
-        return [e.composite for e in self.entries if e.composite > 0]
+        skip = set(exclude_ids)
+        return [e.composite for e in self.entries
+                if e.composite > 0 and e.id not in skip]

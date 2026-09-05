@@ -265,7 +265,20 @@ class AnthropicBackend(Backend):
         # profile. So let it look, and report the problem when a call actually
         # comes back unauthorised, rather than refusing to start.
         key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        kwargs: Dict[str, Any] = {"timeout": 600.0, "max_retries": 2}
+        # Granular timeouts, not one number. A stalled connection and a genuinely
+        # slow answer look identical if you only measure total elapsed time, and
+        # the employer search legitimately runs for minutes: on the run of
+        # 2026-09-04 four of the five search angles took 254-545s, so any total
+        # cap tight enough to catch a stall would also kill real work. `read` is
+        # the gap between bytes, which is the thing that actually distinguishes
+        # them — but only when the response is streamed, which is why
+        # `complete` streams. A hung call now fails in ~2 minutes rather than
+        # 30, and a slow one is left alone.
+        kwargs: Dict[str, Any] = {
+            "timeout": anthropic.Timeout(3600.0, connect=15.0, read=120.0,
+                                         write=60.0),
+            "max_retries": 2,
+        }
         if key:
             kwargs["api_key"] = key
         self._client = anthropic.Anthropic(**kwargs)
@@ -285,17 +298,27 @@ class AnthropicBackend(Backend):
         if tools:
             kwargs["tools"] = _server_tools(caps)
 
-        client = self._client.with_options(timeout=float(timeout))
+        # `timeout` from settings is the ceiling for the whole call; the
+        # per-read stall detection set on the client stays as it is.
+        client = self._client.with_options(
+            timeout=self._anthropic.Timeout(float(timeout), connect=15.0,
+                                            read=120.0, write=60.0))
         try:
+            # Streamed, always. At 16k max_tokens a non-streamed request can
+            # outlive an HTTP timeout, and without a byte-by-byte read timeout
+            # there is nothing to distinguish a stalled connection from a long
+            # answer until the whole request budget is gone.
             if caps["fallbacks"]:
                 # If a safety classifier declines, the API re-runs the same
                 # request on a fallback model inside the same call instead of
                 # returning nothing. A decline before any output is not billed.
-                message = client.beta.messages.create(
-                    betas=["server-side-fallback-2026-07-01"],
-                    fallbacks="default", **kwargs)
+                with client.beta.messages.stream(
+                        betas=["server-side-fallback-2026-07-01"],
+                        fallbacks="default", **kwargs) as stream:
+                    message = stream.get_final_message()
             else:
-                message = client.messages.create(**kwargs)
+                with client.messages.stream(**kwargs) as stream:
+                    message = stream.get_final_message()
         except self._anthropic.AuthenticationError as exc:
             raise LLMError(
                 "the Anthropic API rejected your credentials. Set "
@@ -308,6 +331,10 @@ class AnthropicBackend(Backend):
         except self._anthropic.APIStatusError as exc:
             raise LLMError("the Anthropic API failed (HTTP %s): %s"
                            % (exc.status_code, str(exc)[:400])) from exc
+        except self._anthropic.APITimeoutError as exc:
+            raise LLMError(
+                "the Anthropic API stopped responding mid-answer and the call "
+                "was abandoned; the run continues without this step") from exc
         except self._anthropic.APIConnectionError as exc:
             raise LLMError("could not reach the Anthropic API: %s"
                            % str(exc)[:300]) from exc

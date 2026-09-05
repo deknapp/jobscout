@@ -643,8 +643,10 @@ def find(settings: Settings, *, refresh_profile: bool = False,
 
     # Blend fit, likelihood and recency, then percentile-rank the result against
     # every role ever scored for this candidate.
-    kept = scoring.score_all(kept, settings.weights(),
-                             baseline=history.scored_composites(), today=today)
+    kept = scoring.score_all(
+        kept, settings.weights(),
+        baseline=history.scored_composites(exclude_ids=[p.id for p in kept]),
+        today=today)
     for posting in kept:
         posting.stage = "scored"
     if on_update and kept:
