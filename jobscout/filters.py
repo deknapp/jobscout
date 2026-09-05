@@ -244,9 +244,40 @@ _TITLE_STOPWORDS = {
 }
 
 
+#: Suffixes that make the same role word look like two different ones.
+#: "Engineering" and "Engineer" name the same job; a set intersection does not
+#: know that, and a board full of "Engineering" titles scored zero because of it.
+_SUFFIXES = ("ing", "ers", "er", "s")
+
+
+def _stem(word: str) -> str:
+    """Strip suffixes until the word stops changing.
+
+    One pass is not enough and the result depends on the order of the list:
+    "engineering" loses "ing" and stops at "engineer", while "engineer" loses
+    "er" and becomes "engine", so the two never meet. Stripping to a fixed
+    point lands both on "engine".
+    """
+    while True:
+        for suffix in _SUFFIXES:
+            if len(word) > len(suffix) + 3 and word.endswith(suffix):
+                word = word[:-len(suffix)]
+                break
+        else:
+            return word
+
+
 def _tokens(text: str) -> set:
     words = re.split(r"[^a-z0-9+#]+", (text or "").lower())
-    return {w for w in words if w and w not in _TITLE_STOPWORDS and len(w) > 1}
+    return {_stem(w) for w in words
+            if w and w not in _TITLE_STOPWORDS and len(w) > 1}
+
+
+#: Past this many meaningful words, a title is being descriptive rather than
+#: vague, and dividing by its full length punishes it for saying more. A real
+#: title — "Manufacturing Engineering Systems Analyst (Scientist 1)" — was
+#: scoring below "Data Engineer" purely because it had more words in it.
+_RELEVANCE_DENOMINATOR_CAP = 4
 
 
 def title_relevance(title: str, profile: Dict) -> float:
@@ -259,6 +290,15 @@ def title_relevance(title: str, profile: Dict) -> float:
     title_tokens = _tokens(title)
     if not title_tokens:
         return 0.0
+    wanted = profile_tokens(profile)
+    if not wanted:
+        return 1.0  # no profile to compare against: keep everything
+    hits = len(title_tokens & wanted)
+    denominator = min(len(title_tokens), _RELEVANCE_DENOMINATOR_CAP)
+    return min(1.0, hits / float(denominator))
+
+
+def profile_tokens(profile: Dict) -> set:
     wanted = set()
     for key in ("target_titles", "adjacent_titles", "core_skills", "domains"):
         value = profile.get(key) or []
@@ -266,9 +306,7 @@ def title_relevance(title: str, profile: Dict) -> float:
             value = [value]
         for item in value:
             wanted |= _tokens(str(item))
-    if not wanted:
-        return 1.0  # no profile to compare against: keep everything
-    return len(title_tokens & wanted) / float(len(title_tokens))
+    return wanted
 
 
 #: A board this small is passed through untouched. Under a handful of roles it
@@ -292,6 +330,74 @@ def narrow_to_relevant(postings: Sequence[Posting], profile: Dict,
     scored = sorted(postings, key=lambda p: -title_relevance(p.title, profile))
     kept = [p for p in scored if title_relevance(p.title, profile) > 0][:keep]
     return kept, len(postings) - len(kept)
+
+
+# --- board search terms ----------------------------------------------------
+#
+# A profile's target_titles are written for a human: "Senior/Principal R&D AI
+# (Artificial Intelligence)", "Computer Scientist / Scientist 3". Handing those
+# to a job board as a literal query matches nothing — Los Alamos has 486 open
+# roles and this candidate's title list matched ZERO of them, because no profile
+# phrase is a substring of "Software Developer (Scientist 2)". The boards that
+# take a query are Workday and .jobs, which is precisely where the national labs
+# and the big defence contractors are, so the effect was to make the largest and
+# most relevant employers look empty while small startup boards — which are
+# returned whole, unqueried — supplied the entire shortlist.
+#
+# What a board search wants is the short role noun, not the whole aspiration.
+# Broad is right here: the query only has to get the plausible roles through the
+# door, and narrow_to_relevant and the ranking agent do the discriminating.
+
+#: Fragments of a written title that name something other than the role.
+_TERM_SPLIT = re.compile(r"[/,;&]|\s[-–—]\s|\(|\)")
+
+#: Shorter than this and a term is an acronym, not a role.
+_MIN_TERM_CHARS = 4
+
+
+def _title_fragments(title: str) -> List[List[str]]:
+    """One title as its comma/slash-separated parts, each a list of words."""
+    out = []
+    for fragment in _TERM_SPLIT.split(title or ""):
+        words = [w for w in re.split(r"[^a-z0-9+#]+", fragment.lower())
+                 if len(w) > 1 and w not in _TITLE_STOPWORDS]
+        if words:
+            out.append(words)
+    return out
+
+
+def search_terms(profile: Dict, limit: int = 8) -> List[str]:
+    """Short query terms for boards that take one, best first.
+
+    Head nouns come before two-word phrases because a board search narrows on
+    every extra word: "engineer" finds the scientific software role that
+    "Senior Scientific Software Engineer" does not.
+    """
+    heads: Dict[str, int] = {}
+    phrases: Dict[str, int] = {}
+    titles = []
+    for key in ("target_titles", "adjacent_titles"):
+        value = profile.get(key) or []
+        titles.extend([value] if isinstance(value, str) else value)
+    for title in titles:
+        for words in _title_fragments(str(title)):
+            # An acronym left over from a parenthetical — the "AI" of
+            # "Forward Deployed Engineer (AI)" — is not a role name, and as a
+            # board query it matches everything and nothing.
+            if len(words[-1]) >= _MIN_TERM_CHARS:
+                heads[words[-1]] = heads.get(words[-1], 0) + 1
+            if len(words) > 1:
+                phrase = " ".join(words[-2:])
+                phrases[phrase] = phrases.get(phrase, 0) + 1
+
+    def ranked(counts: Dict[str, int]) -> List[str]:
+        return [t for t, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+    terms: List[str] = []
+    for term in ranked(heads) + ranked(phrases):
+        if term not in terms:
+            terms.append(term)
+    return terms[:limit]
 
 
 def excluded_company(posting: Posting, exclude: Iterable[str]) -> bool:
