@@ -131,6 +131,24 @@ _NAME_PATTERNS = (
                r"([A-Z][a-z’'\-]+(?: [A-Z][a-z’'\-]+){0,2})\s*$", re.M | re.I),
 )
 
+#: LinkedIn's relay writes every message to the same shape: the subject twice,
+#: then the sender's name alone on a line, then a "Reply" link. That structure
+#: is worth more than any amount of guessing at prose, because it holds even
+#: when the recruiter never introduces themselves — which most of them don't.
+_RELAY_HEADER = re.compile(
+    r"^\s*([A-Z][\w’'\-]+(?:\s+[A-Z][\w’'\-]+){0,2})\s*\n\s*Reply\s*$", re.M)
+
+#: Who the recruiter works for. An agency name is not the hiring company, but
+#: it is the thing that makes them worth keeping: an agency that placed one
+#: cheminformatics role will have the next one too.
+_AGENCY_PATTERNS = (
+    re.compile(r"recruit\w*\s+(?:with|at|for)\s+([A-Z][\w&.'’\- ]{1,40}?)"
+               r"(?:[.,!\n]|\s+(?:and|who|working))"),
+    re.compile(r"i(?:'m| am)\s+(?:currently\s+)?(?:with|at)\s+([A-Z][\w&.'’\- ]{1,40}?)"
+               r"(?:[.,!\n])"),
+    re.compile(r"on behalf of\s+(?:our client\s+)?([A-Z][\w&.'’\- ]{1,40}?)(?:[.,!\n])"),
+)
+
 #: Words that look like a name to a regex but are not one.
 _NOT_A_NAME = {"the", "there", "this", "that", "hope", "just", "thanks", "thank",
                "please", "would", "could", "unfortunately", "apologies", "sorry",
@@ -257,7 +275,17 @@ def _tidy_company(raw: str) -> str:
 
 
 def extract_person(message: Message) -> str:
-    """The human's name, when they introduced themselves."""
+    """The human's name.
+
+    The relay's own layout is tried first and is nearly always right; the prose
+    patterns are the fallback for mail that arrived some other way.
+    """
+    body = message.body or ""
+    match = _RELAY_HEADER.search(body)
+    if match:
+        candidate = match.group(1).strip()
+        if candidate.split()[0].lower() not in _NOT_A_NAME and len(candidate) > 2:
+            return candidate
     for pattern in _NAME_PATTERNS:
         match = pattern.search(message.body or message.snippet or "")
         if match:
@@ -269,10 +297,33 @@ def extract_person(message: Message) -> str:
     return ""
 
 
+def _unwrap(text: str) -> str:
+    """Join hard-wrapped lines inside a paragraph.
+
+    Mail clients wrap at 72 columns, which lands a line break in the middle of
+    "Insight Global" often enough to matter. Blank lines still separate
+    paragraphs, so the relay's own layout is untouched.
+    """
+    return re.sub(r"(?<!\n)\n(?!\n)", " ", text or "")
+
+
+def extract_agency(message: Message) -> str:
+    """The staffing firm behind an approach, when one is named."""
+    for pattern in _AGENCY_PATTERNS:
+        match = pattern.search(_unwrap(message.body or message.snippet or ""))
+        if match:
+            name = _tidy_company(match.group(1))
+            if name:
+                return name
+    return ""
+
+
 def extract_role(message: Message) -> str:
     """The job title being discussed, from the subject where possible."""
     subject = message.clean_subject
     for pattern in (
+        re.compile(r"(?:opportunit\w*|opening|vacancy) for (?:an?|the )?"
+                   r"([\w/&,\-\(\) ]{4,60}?)(?: role| position|$)", re.I),
         re.compile(r"(?:application|apply(?:ing)? (?:to|for)|interest in) (?:the )?"
                    r"([\w/&,\-\(\) ]{4,60}?) (?:role|position)", re.I),
         re.compile(r"^([\w/&,\-\(\) ]{4,60}?) (?:role|position|opportunit)", re.I),
@@ -325,6 +376,7 @@ class Outreach:
     """
     person: str = ""
     company: str = ""
+    agency: str = ""
     role: str = ""
     first_contact: str = ""
     last_contact: str = ""
@@ -419,6 +471,7 @@ def outreach(messages: Sequence[Message]) -> List[Outreach]:
         entry = Outreach(
             person=next((extract_person(m) for m in inbound if extract_person(m)), ""),
             company=next((extract_company(m) for m in inbound if extract_company(m)), ""),
+            agency=next((extract_agency(m) for m in inbound if extract_agency(m)), ""),
             role=extract_role(first),
             first_contact=first.date[:10],
             last_contact=max(m.date[:10] for m in thread if m.date),

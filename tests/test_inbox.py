@@ -260,3 +260,44 @@ def test_messages_round_trip_and_deduplicate(tmp_path):
     inbox.save_messages(tmp_path / "two.json", second)
     loaded = inbox.load_messages(tmp_path)
     assert [m.id for m in loaded] == ["a", "b"]
+
+
+# --- the relay's own layout ------------------------------------------------
+
+RELAY_BODY = """Exciting opportunity for an IT Infrastructure role
+Exciting opportunity for an IT Infrastructure role
+
+      Dana Fell
+        Reply
+        https://www.linkedin.com/messaging/thread/2-abc==/
+
+Hi Nathan, My name is Dana Fell and I am a professional recruiter with Kestrel
+Staffing. I'm reaching out on behalf of our client who is currently hiring.
+
+Best regards,
+Dana
+"""
+
+
+def test_the_relay_layout_names_the_sender_even_without_an_introduction():
+    """LinkedIn writes the sender's name alone on the line above "Reply". That
+    holds even when the recruiter never says who they are — and most don't."""
+    body = RELAY_BODY.replace("Hi Nathan, My name is Dana Fell and I am a "
+                              "professional recruiter with Kestrel\nStaffing. ", "")
+    m = msg(sender=RELAY, date="2026-08-20T00:00:00Z",
+            subject="Exciting opportunity for an IT Infrastructure role", body=body)
+    assert inbox.extract_person(m) == "Dana Fell"
+
+
+def test_the_staffing_firm_is_recovered_separately_from_the_hiring_company():
+    m = msg(sender=RELAY, date="2026-08-20T00:00:00Z",
+            subject="Exciting opportunity for an IT Infrastructure role",
+            body=RELAY_BODY)
+    assert inbox.extract_agency(m) == "Kestrel Staffing"
+
+
+def test_the_job_is_taken_from_the_subject_not_the_adjective_in_front_of_it():
+    m = msg(sender=RELAY, date="2026-08-20T00:00:00Z",
+            subject="Exciting opportunity for an IT Infrastructure role",
+            body=RELAY_BODY)
+    assert inbox.extract_role(m) == "IT Infrastructure"
