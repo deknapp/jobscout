@@ -315,3 +315,34 @@ def test_linkedin_and_mail_are_combined_rather_than_one_winning():
                     conversations=talked, today=dt.date(2026, 9, 5))[0]
     assert lead.spoke_recently == 5
     assert "long enough ago to pick up" not in " ".join(lead.reasons)
+
+
+# --- the connected-within window -------------------------------------------
+
+def test_connected_within_keeps_recent_and_drops_old(tmp_path, monkeypatch):
+    """The window filters on when the connection was made.
+
+    `moved-on` already used DORMANT_YEARS internally, but there was no way to
+    ask "who have I met lately" from the command line.
+    """
+    import datetime as dt
+    from jobscout.network import Connection
+
+    today = dt.date.today()
+    recent = Connection(first_name="Recent", last_name="Person",
+                        company="Iambic Therapeutics", position="Engineer",
+                        connected_on=(today - dt.timedelta(days=200)).isoformat())
+    old = Connection(first_name="Old", last_name="Person",
+                     company="Iambic Therapeutics", position="Engineer",
+                     connected_on=(today - dt.timedelta(days=8 * 365)).isoformat())
+    undated = Connection(first_name="Undated", last_name="Person",
+                         company="Iambic Therapeutics", position="Engineer",
+                         connected_on="")
+
+    assert recent.connected_date is not None
+    assert old.connected_date is not None
+    assert undated.connected_date is None
+
+    cutoff = today - dt.timedelta(days=int(3 * 365.25))
+    assert recent.connected_date >= cutoff
+    assert old.connected_date < cutoff

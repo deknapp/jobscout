@@ -9,7 +9,7 @@
     jobscout history [--status recommended]
     jobscout mark <id> --applied | --dismissed [--note "..."]
     jobscout network import <export.zip|Connections.csv|folder>
-    jobscout network leads [--bucket moved-on] [--max 40]
+    jobscout network leads [--bucket moved-on] [--connected-within 3] [--max 40]
     jobscout network coverage
     jobscout network changes
     jobscout network me --add "Employer" --from 2020-08 --to 2024-05
@@ -588,6 +588,25 @@ def cmd_network(args: argparse.Namespace) -> int:
         from .corpus import normalize_company
         key = normalize_company(args.company)
         leads = [l for l in leads if l.connection.company_key == key]
+    undated = 0
+    if args.connected_within:
+        # A recency window on when the connection was *made*. The moved-on
+        # signal already uses DORMANT_YEARS internally, but there was no way to
+        # ask "who have I met lately" from the command line.
+        import datetime as _dt
+        cutoff = _dt.date.today() - _dt.timedelta(days=int(args.connected_within * 365.25))
+        kept = []
+        for lead in leads:
+            when = lead.connection.connected_date
+            if when is None:
+                # Kept rather than dropped: an export missing a date is a gap in
+                # the data, not evidence that the connection is old, and
+                # silently losing people is the worse failure here.
+                undated += 1
+                kept.append(lead)
+            elif when >= cutoff:
+                kept.append(lead)
+        leads = kept
     buried = [l for l in leads if l.killed]
     waiting = [l for l in leads if l.spoke_recently is not None]
     if not args.all:
@@ -629,6 +648,10 @@ def cmd_network(args: argparse.Namespace) -> int:
     print("%d shown of %d connection(s)%s."
           % (len(shown), len(connections),
              "; %s (--all to see)" % ", ".join(notes) if notes else ""))
+    if args.connected_within:
+        print("Window: connected within %g year(s)%s."
+              % (args.connected_within,
+                 "; %d kept with no date on the export" % undated if undated else ""))
     return 0
 
 
@@ -1091,6 +1114,10 @@ def build_parser() -> argparse.ArgumentParser:
     network.add_argument("--max", type=int, default=40)
     network.add_argument("--all", action="store_true",
                          help="include connections with no signal at all")
+    network.add_argument("--connected-within", dest="connected_within", type=float,
+                         metavar="YEARS",
+                         help="only people you connected with in the last N years "
+                              "(connections with no date on the export are kept)")
     network.add_argument("--add", help="record an employer or school you were at")
     network.add_argument("--remove", help="forget one")
     network.add_argument("--from", dest="since", help="YYYY-MM or YYYY-MM-DD")
