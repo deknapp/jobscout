@@ -10,6 +10,11 @@ and cover letters, you know roughly what you are aiming at, and what you
 actually need is a short list of *real, open, reachable* roles you have not
 already seen.
 
+It also reads the search you are **already running** — out of your own LinkedIn
+export and your own mailbox — because by that point the harder question is not
+"what else could I apply to" but *what is still live, who owes whom a reply, and
+who do I already know inside the places I am chasing.*
+
 ```
 $ jobscout find
 
@@ -121,6 +126,77 @@ before anything costs money: the hard location gate, and — only when a board
 still has more than 25 in-area roles — a crude title-overlap trim. Below that
 cap nothing is trimmed, because an unusual title is exactly what token overlap
 throws away by mistake.
+
+## The search you are already running
+
+Three commands read what you already have. None of them scrapes anything: they
+read your own LinkedIn data export and your own mail.
+
+```
+$ jobscout brief
+
+LIVE PURSUITS — 13 needing action of 32
+  [now]        Halcyon Labs — Computer Scientist 2/3 (IRC145054)
+               Send what Kim asked for. Nothing else here matters until it lands.
+  [this week]  Kestrel Bio — Platform Engineer
+               Follow up with Dana Fell.
+
+PEOPLE — top of 1562 connection(s); 17 hidden, you contacted them recently
+  A Former Colleague       Director, Cheminformatics @ Somewhere Else
+      connected while you were at OpenEye; now at Somewhere Else
+  15 of 36 target employers have someone inside.
+```
+
+**`jobscout network`** ranks your connections for who is worth a message. The
+useful column in `Connections.csv` is the one people ignore: the date you
+connected. Cross-referenced against your own employment history — read from the
+same export — it says *how* you met someone. If the company on their row today
+is a different one, they have moved on since, and those are the contacts a
+stalled search has not thought of, because you still picture them at the old
+job. `network coverage` then says which of the employers you are chasing you
+have any path into, and which are cold applications.
+
+**`jobscout inbox`** reconstructs your applications, the recruiters who
+approached *you*, and the named humans inside those companies. Applicant
+tracking systems send a receipt for every submission, so that history is
+complete in a way memory is not.
+
+**`jobscout pursuits`** reads what is live. This is the one place a model earns
+its keep, because the decisive sentence in a live process looks like *"there's
+still no req posted, ping me in a week or two"*, written by a hiring manager
+from her own address — no sender to key on, no boilerplate to match. Asked to
+parse that, the regex layer reported a national laboratory as a company called
+"our organization".
+
+So the work is split along the line each side is good at:
+
+* **Python decides what the model may read.** Alerts, machine mail and personal
+  correspondence are filtered out before a prompt is built. That is a cost
+  control and a privacy boundary, not only a quality one.
+* **The model reads, and only reads** — stage, requisition, who replied last,
+  the stated blocker — and every field it returns carries a quote copied from
+  the mail it came from.
+* **Python decides what to do.** The recommendation comes from rules you can
+  read and disagree with. A model asked for advice sounds equally confident
+  whatever the facts and answers differently tomorrow.
+
+Dates are never asked of the model. The headers already know, and a model asked
+for a date produces a plausible one.
+
+Two of those rules are worth stating because they are judgments, not facts. An
+employer running several searches is several pursuits — a rejection on one says
+nothing about another. And a stated structural blocker is not a silence
+problem: chasing the person who told you there is no requisition does not
+create one, so the advice is to ask someone else inside whether it is real.
+
+**Telling it "no".** `jobscout dismiss` rules out a person or an employer and
+every ranker honours it, because a recommender that cannot be told no is only
+useful once. A reason is required — six weeks later "why did I rule this out?"
+is a real question. Nothing is deleted or hidden silently: dismissed leads sink
+with the reason attached and are counted in the footer. Anything withheld from
+someone trying to find a job has to be visible and reversible.
+
+---
 
 ## Filters that know the difference between "no" and "didn't say"
 
@@ -417,6 +493,27 @@ jobscout serve             # the local web app: the board, sliders, run button
 
 jobscout history                      # what it has already shown you
 jobscout mark a1b2c3d4e5f6 --applied  # so it stops offering that one
+```
+
+And for the search already in flight:
+
+```bash
+# your own LinkedIn export (Settings → Data privacy → Get a copy of your data)
+jobscout network me --from-export ~/Downloads/LinkedInExport   # your own history
+jobscout network import ~/Downloads/LinkedInExport             # your connections
+jobscout network leads                # who is worth a message, and why
+jobscout network coverage             # which targets you have a path into
+jobscout network changes              # diff two exports: who changed jobs
+
+# your own mail — an export needs no credential at all
+jobscout ingest --mbox ~/takeout.mbox --me you@example.com
+jobscout ingest --imap --user you@example.com     # or read the server directly
+
+jobscout pursuits                     # what is live, and what to do about each
+jobscout brief                        # one screen, from what it already knows
+
+jobscout dismiss "Some Recruiter" --reason "only ever pitches contract work"
+jobscout alias "Acme" --same-as acmecorp   # one employer, two domains
 ```
 
 `jobscout find` prints Markdown to stdout and progress to stderr, so
