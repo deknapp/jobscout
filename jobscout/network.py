@@ -484,6 +484,27 @@ def read_conversations(path: Path, me: str = "") -> Dict[str, Conversation]:
     return found
 
 
+def merge_conversations(first: Optional["Conversation"], second: Optional["Conversation"]
+                        ) -> Optional["Conversation"]:
+    """Combine what two systems know about one relationship.
+
+    LinkedIn and a mailbox each hold half the history, and looking one up
+    *instead of* the other is worse than either: the profile URL matched first
+    and reported a conversation from 2024, so an email sent five days ago was
+    never seen and the contact was recommended as overdue.
+    """
+    if first is None or second is None:
+        return first or second
+    return Conversation(
+        name=first.name or second.name,
+        url=first.url or second.url,
+        sent=first.sent + second.sent,
+        received=first.received + second.received,
+        last_sent=max(first.last_sent, second.last_sent),
+        last_received=max(first.last_received, second.last_received),
+    )
+
+
 def conversations_from_mail(correspondents: Sequence) -> Dict[str, Conversation]:
     """Fold your mailbox into the contact history.
 
@@ -617,6 +638,10 @@ class Lead:
     anchor: str = ""                 # the affiliation you probably met through
     reasons: List[str] = field(default_factory=list)
     killed: str = ""
+    #: Days since you last contacted them, when that was recent enough to
+    #: matter. A "who to contact next" list that includes someone you wrote to
+    #: on Monday is answering a different question than the one asked.
+    spoke_recently: Optional[int] = None
 
     @property
     def name(self) -> str:
@@ -760,16 +785,19 @@ def rank(connections: Sequence[Connection],
         # name you messaged last week is not a lead, however good the match —
         # and a name you had a real exchange with two years ago is a far better
         # one than any stranger, because the introduction is already done.
-        # The profile URL is the strong key; the name is the fallback that lets
-        # a mailbox and a connections file describe the same person.
-        talked = (conversations.get(profile_key(connection.url))
-                  or conversations.get("name:%s" % connection.name.strip().lower()))
+        # Both keys are consulted and the answers combined. Preferring one
+        # would hide whatever the other knows, which is exactly how a contact
+        # emailed last week gets recommended as long overdue.
+        talked = merge_conversations(
+            conversations.get(profile_key(connection.url)),
+            conversations.get("name:%s" % connection.name.strip().lower()))
         if talked:
             days = talked.days_since(today)
             if days is None:
                 pass
             elif days < TOO_SOON_DAYS:
                 lead.score -= 30
+                lead.spoke_recently = days
                 lead.reasons.append("you messaged them %d days ago — let it sit" % days)
             elif talked.two_way and days >= OVERDUE_DAYS:
                 lead.score += 25

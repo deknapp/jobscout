@@ -589,8 +589,10 @@ def cmd_network(args: argparse.Namespace) -> int:
         key = normalize_company(args.company)
         leads = [l for l in leads if l.connection.company_key == key]
     buried = [l for l in leads if l.killed]
+    waiting = [l for l in leads if l.spoke_recently is not None]
     if not args.all:
-        leads = [l for l in leads if l.bucket != net.REST and not l.killed]
+        leads = [l for l in leads if l.bucket != net.REST and not l.killed
+                 and l.spoke_recently is None]
     shown = leads[:args.max]
     if not shown:
         print("nothing matched")
@@ -619,9 +621,14 @@ def cmd_network(args: argparse.Namespace) -> int:
             if connection.url:
                 print("       %s" % connection.url)
         print()
+    notes = []
+    if buried:
+        notes.append("%d you ruled out" % len(buried))
+    if waiting:
+        notes.append("%d you contacted recently" % len(waiting))
     print("%d shown of %d connection(s)%s."
           % (len(shown), len(connections),
-             "; %d you ruled out (--all to see)" % len(buried) if buried else ""))
+             "; %s (--all to see)" % ", ".join(notes) if notes else ""))
     return 0
 
 
@@ -936,8 +943,13 @@ def cmd_brief(args: argparse.Namespace) -> int:
         leads = net.rank(connections, affiliations, targets, profile,
                          conversations=_contact_history(settings),
                          killed=_killed(settings))
-        leads = [l for l in leads if l.bucket != net.REST and not l.killed]
-        print("PEOPLE — top of %d connection(s)" % len(connections))
+        recent = [l for l in leads if l.spoke_recently is not None]
+        leads = [l for l in leads if l.bucket != net.REST and not l.killed
+                 and l.spoke_recently is None]
+        print("PEOPLE — top of %d connection(s)%s"
+              % (len(connections),
+                 "; %d hidden, you contacted them in the last %d days"
+                 % (len(recent), net.TOO_SOON_DAYS) if recent else ""))
         for lead in leads[:args.max]:
             print("  %-24s %s" % (lead.name[:24],
                                   ("%s @ %s" % (lead.connection.position,

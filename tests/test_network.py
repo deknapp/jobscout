@@ -277,3 +277,41 @@ def test_someone_you_emailed_last_week_is_not_offered_as_a_fresh_lead():
     lead = net.rank([person], [], {"Kestrel Bio": "applied"},
                     conversations=talked, today=dt.date(2026, 9, 5))[0]
     assert "5 days ago" in " ".join(lead.reasons)
+
+
+def test_someone_contacted_recently_is_marked_so_the_view_can_hide_them():
+    """A 30-point penalty was not enough: a contact at an employer the user had
+    applied to still topped the list five days after he emailed her, because
+    the target-employer bonus is larger. Whether to show her is the view's
+    decision, so the fact is recorded rather than fudged into the score."""
+    from jobscout.inbox import Correspondent
+
+    talked = net.conversations_from_mail([
+        Correspondent(email="mary.pitman@example.com", sent=1, last_sent="2026-08-31")])
+    person = Connection(first_name="Mary", last_name="Pitman", url="https://x/m",
+                        company="Kestrel Bio", position="Head of Simulation",
+                        connected_on="2021-01-01")
+    lead = net.rank([person], [], {"Kestrel Bio": "applied"},
+                    conversations=talked, today=dt.date(2026, 9, 5))[0]
+    assert lead.spoke_recently == 5
+
+
+def test_linkedin_and_mail_are_combined_rather_than_one_winning():
+    """Each system holds half the history. Looking up the profile URL *instead
+    of* the address reported a 2024 conversation and hid an email sent five
+    days ago, so the contact came back marked "warm, and long overdue"."""
+    from jobscout.inbox import Correspondent
+
+    talked = net.conversations_from_mail([
+        Correspondent(email="mary.pitman@example.com", sent=1, last_sent="2026-08-31")])
+    talked["mary"] = net.Conversation(name="Mary Pitman", url="https://x/in/mary",
+                                      sent=3, received=3, last_sent="2024-04-15",
+                                      last_received="2024-04-15")
+    person = Connection(first_name="Mary", last_name="Pitman",
+                        url="https://www.linkedin.com/in/mary",
+                        company="Kestrel Bio", position="Head of Simulation",
+                        connected_on="2021-01-01")
+    lead = net.rank([person], [], {"Kestrel Bio": "applied"},
+                    conversations=talked, today=dt.date(2026, 9, 5))[0]
+    assert lead.spoke_recently == 5
+    assert "long enough ago to pick up" not in " ".join(lead.reasons)
