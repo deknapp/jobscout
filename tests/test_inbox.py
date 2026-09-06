@@ -324,3 +324,12 @@ def test_a_credential_after_a_name_is_not_part_of_the_name():
             subject="Subject line", body=body)
     assert inbox.extract_person(m) == "Greg Taylor"
     assert inbox.extract_company(m) == "Kestrel Bio"
+
+
+def test_an_address_supplies_the_name_when_the_header_does_not():
+    """A mail you sent says "Hi Mary," rather than introducing her, so the
+    address is often the only place her name survives."""
+    person = inbox.Correspondent(email="mary.pitman@example.com")
+    assert person.named == "Mary Pitman"
+    assert inbox.Correspondent(email="info@example.com").named == ""
+    assert inbox.Correspondent(email="x@example.com", name="Given Name").named == "Given Name"

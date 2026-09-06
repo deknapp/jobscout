@@ -255,3 +255,23 @@ def test_an_unusable_message_map_falls_back_to_the_whole_thread():
     llm, _ = llm_returning([{"role": "X", "stage": "enquiry", "ball_with": "them",
                              "messages": ["nonsense", 99]}])
     assert pursuits.read(thread, "B", llm, today=TODAY)[0].last_activity == "2026-08-01"
+
+
+def test_an_approach_you_never_answered_is_a_lead_not_an_obligation():
+    """Filing every unanswered cold pitch as "act now", alongside a deliverable
+    you actually owe someone, produced 25 urgent items out of 31 — which is the
+    same as having none."""
+    cold = pursuits.Pursuit(company="Kestrel", people=["Dana"], stage="enquiry",
+                            ball_with="you", you_replied=False,
+                            last_activity="2026-06-24")
+    owed = pursuits.Pursuit(company="Halcyon", people=["Kim"], stage="screening",
+                            ball_with="you", you_replied=True,
+                            last_activity="2026-09-01")
+    assert pursuits.recommend(cold, TODAY).urgency == "later"
+    assert "only if it fits" in pursuits.recommend(cold, TODAY).action
+    assert pursuits.recommend(owed, TODAY).urgency == "now"
+
+
+def test_an_unnamed_employer_says_so_wherever_it_is_printed():
+    anonymous = pursuits.Pursuit(company="thread:abc123", role="Software Engineer")
+    assert anonymous.label == "(employer not named) — Software Engineer"

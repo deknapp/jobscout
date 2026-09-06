@@ -592,6 +592,22 @@ class Correspondent:
         return stem.replace("-", " ").title()
 
     @property
+    def named(self) -> str:
+        """Their name, falling back to the one their address spells out.
+
+        Most business addresses are the person's name with a dot in it, and a
+        mail you sent says "Hi Mary," rather than introducing her — so the
+        header is often the only place the name survives.
+        """
+        if self.name:
+            return self.name
+        local = self.email.partition("@")[0]
+        parts = [p for p in re.split(r"[._\-]+", local) if p.isalpha() and len(p) > 1]
+        if len(parts) < 2 or len(parts) > 3:
+            return ""
+        return " ".join(part.capitalize() for part in parts)
+
+    @property
     def last(self) -> str:
         return max(self.last_sent, self.last_received)
 

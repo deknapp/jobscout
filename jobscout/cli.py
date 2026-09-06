@@ -729,14 +729,7 @@ def cmd_pursuits(args: argparse.Namespace) -> int:
             continue
         shown += 1
         pursuit = item.pursuit
-        header = pursuit.company
-        if header.startswith("thread:"):
-            header = "(employer not named)"
-        if pursuit.role:
-            header += " — %s" % pursuit.role
-        if pursuit.requisition:
-            header += " (%s)" % pursuit.requisition
-        print("[%s] %s" % (item.urgency.upper(), header))
+        print("[%s] %s" % (item.urgency.upper(), pursuit.label))
         print("    stage %s, ball with %s, quiet %s day(s)"
               % (pursuit.stage, pursuit.ball_with,
                  pursuit.days_quiet() if pursuit.days_quiet() is not None else "?"))
@@ -928,11 +921,7 @@ def cmd_brief(args: argparse.Namespace) -> int:
         acting = [a for a in advice if a.urgency in ("now", "this week")]
         print("LIVE PURSUITS — %d needing action of %d%s" % (len(acting), len(advice), stale))
         for item in acting[:args.max]:
-            pursuit = item.pursuit
-            name = pursuit.company + (" — %s" % pursuit.role if pursuit.role else "")
-            if pursuit.requisition:
-                name += " (%s)" % pursuit.requisition
-            print("  [%s] %s" % (item.urgency, name))
+            print("  [%s] %s" % (item.urgency, item.pursuit.label))
             print("      %s" % item.action)
         waiting = [a for a in advice if a.urgency == "none" and a.pursuit.stage != "closed"]
         if waiting:

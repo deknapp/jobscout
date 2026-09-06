@@ -82,12 +82,24 @@ class Pursuit:
     last_activity: str = ""
     last_direction: str = ""          # "you" or "them"
     chased: int = 0                   # times you followed up with no reply
+    you_replied: bool = False         # have you ever written back at all
     evidence: List[Evidence] = field(default_factory=list)
     messages: int = 0
 
     @property
     def key(self) -> str:
         return "%s|%s" % (normalize_company(self.company), self.requisition.lower())
+
+    @property
+    def label(self) -> str:
+        """How to print this pursuit, in any view."""
+        name = ("(employer not named)" if self.company.startswith("thread:")
+                else self.company)
+        if self.role:
+            name += " — %s" % self.role
+        if self.requisition:
+            name += " (%s)" % self.requisition
+        return name
 
     def days_quiet(self, today: Optional[dt.date] = None) -> Optional[int]:
         when = parse_date((self.last_activity or "")[:10])
@@ -320,6 +332,7 @@ def _fill_dates(pursuit: Pursuit, messages: Sequence[Message]) -> None:
     dated = [m for m in messages if m.date]
     if not dated:
         return
+    pursuit.you_replied = any(m.from_me for m in dated)
     pursuit.first_contact = dated[0].date[:10]
     last = dated[-1]
     pursuit.last_activity = last.date[:10]
@@ -363,6 +376,17 @@ def recommend(pursuit: Pursuit, today: Optional[dt.date] = None) -> Advice:
         advice.urgency = "now"
         advice.action = "Send what %s asked for. Nothing else in this pursuit matters until it lands." % who
         advice.why = pursuit.blocker or "They are waiting on a deliverable from you."
+        return advice
+
+    if pursuit.ball_with == YOU and not pursuit.you_replied:
+        # Somebody wrote to you once and you never answered. That is an
+        # opportunity, not a commitment — filing it as "act now" alongside a
+        # deliverable you actually owe someone is how a list of 31 things ends
+        # up with 25 marked urgent and gets ignored.
+        advice.urgency = "later"
+        advice.action = "Unanswered approach from %s — worth a reply only if it fits." % who
+        advice.why = ("They wrote %s days ago and you never answered." % quiet
+                      if quiet is not None else "You never answered.")
         return advice
 
     if pursuit.ball_with == YOU:

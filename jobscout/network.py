@@ -495,11 +495,11 @@ def conversations_from_mail(correspondents: Sequence) -> Dict[str, Conversation]
     """
     found: Dict[str, Conversation] = {}
     for person in correspondents:
-        name = (getattr(person, "name", "") or "").strip().lower()
+        name = (getattr(person, "named", "") or "").strip().lower()
         if not name:
             continue
         found["name:%s" % name] = Conversation(
-            name=person.name, url="", sent=person.sent, received=person.received,
+            name=person.named, url="", sent=person.sent, received=person.received,
             last_sent=person.last_sent, last_received=person.last_received)
     return found
 
