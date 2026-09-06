@@ -67,7 +67,7 @@ _GENERIC_TOKENS = {
 }
 
 
-def same_employer(first: str, second: str) -> bool:
+def same_employer(first: str, second: str, aliases=None) -> bool:
     """Are these two names the same employer.
 
     Exact keys are not enough. "OpenEye Scientific" and "OpenEye, Cadence
@@ -80,6 +80,8 @@ def same_employer(first: str, second: str) -> bool:
     shared "national" or "sciences" buys nothing, which is what keeps Sandia
     National Laboratories apart from the National Renewable Energy Laboratory.
     """
+    if aliases is not None:
+        first, second = aliases.canonical(first), aliases.canonical(second)
     first_key, second_key = normalize_company(first), normalize_company(second)
     if not first_key or not second_key:
         return False

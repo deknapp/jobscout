@@ -700,7 +700,10 @@ def cmd_pursuits(args: argparse.Namespace) -> int:
     only = [args.company] if args.company else None
     sys.stderr.write("reading %d message(s) across %d employer(s)…\n"
                      % (len(messages), len(live.group(messages))))
-    advice = live.review(messages, llm, only=only, killed=_killed(settings))
+    from .aliases import Aliases
+
+    advice = live.review(messages, llm, only=only, killed=_killed(settings),
+                         aliases=Aliases(settings.aliases_path))
     if not advice:
         print("nothing live found")
         return 0
@@ -828,6 +831,56 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     print("ingested %d message(s) from %d correspondent(s)" % (len(messages), people))
     print("  saved to %s" % redact(path))
     print("  now run: jobscout pursuits")
+    return 0
+
+
+# --- alias -----------------------------------------------------------------
+
+def cmd_alias(args: argparse.Namespace) -> int:
+    from .aliases import Aliases, infer
+    from . import inbox as box, pursuits as live
+
+    settings = load_settings(require_applications=False)
+    settings.ensure_data_dir()
+    aliases = Aliases(settings.aliases_path)
+
+    if args.same_as:
+        if not args.name:
+            return _fail("give the name to keep, then --same-as the other one(s)")
+        aliases.add(args.name, *args.same_as)
+        aliases.save()
+        print("%s also known as: %s" % (args.name, ", ".join(args.same_as)))
+        return 0
+
+    if args.suggest:
+        source = settings.inbox_dir
+        if not source.exists():
+            return _fail("no mail ingested yet")
+        messages = box.load_messages(source)
+        # A relay writes every message from the same address, so its local part
+        # is the same string for every recruiter alive — which proposed merging
+        # three unrelated companies on the first real run.
+        pairs = [(m.counterpart.partition("@")[0], live.company_of(m))
+                 for m in messages
+                 if live.is_human_mail(m)
+                 and not any(relay in m.counterpart for relay in box.RELAY_SENDERS)
+                 and not box.NOREPLY.match(m.counterpart)]
+        found = infer(pairs)
+        if not found:
+            print("nothing to merge — no one writes to you from two employers")
+            return 0
+        print("The same person writes from both sides of each pair, which is what")
+        print("an acquisition looks like from outside. Confirm any that are real:\n")
+        for first, second in found:
+            print('  jobscout alias "%s" --same-as %s' % (first, second))
+        return 0
+
+    if not len(aliases):
+        print("no aliases yet")
+        return 0
+    for key, canonical in sorted(aliases.map.items()):
+        if key != canonical.lower():
+            print("%-28s -> %s" % (key, canonical))
     return 0
 
 
@@ -992,6 +1045,14 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--since-years", dest="since_years", type=float, default=2.0,
                         help="ignore mail older than this (default 2)")
     ingest.set_defaults(func=cmd_ingest)
+
+    alias = subparsers.add_parser(
+        "alias", help="tell the tool that two employer names mean one employer")
+    alias.add_argument("name", nargs="?", help="the name to keep")
+    alias.add_argument("--same-as", nargs="+", help="other names for it")
+    alias.add_argument("--suggest", action="store_true",
+                       help="propose merges from people who write from two domains")
+    alias.set_defaults(func=cmd_alias)
 
     return parser
 

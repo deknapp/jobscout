@@ -166,13 +166,21 @@ def bucket_key(message: Message) -> str:
     return "thread:%s" % (message.thread_id or message.id)
 
 
-def group(messages: Sequence[Message]) -> Dict[str, List[Message]]:
-    """Bucket the mailbox by employer, keeping only what a person wrote."""
+def group(messages: Sequence[Message], aliases=None) -> Dict[str, List[Message]]:
+    """Bucket the mailbox by employer, keeping only what a person wrote.
+
+    ``aliases`` folds an employer's other names in, so mail from two domains
+    belonging to one company is one pursuit rather than two half-pursuits that
+    each look stalled.
+    """
     buckets: Dict[str, List[Message]] = {}
     for message in messages:
         if not is_human_mail(message):
             continue
-        buckets.setdefault(bucket_key(message), []).append(message)
+        key = bucket_key(message)
+        if aliases is not None and not key.startswith("thread:"):
+            key = aliases.key(key) or key
+        buckets.setdefault(key, []).append(message)
     for thread in buckets.values():
         thread.sort(key=lambda m: m.date or "")
     return buckets
@@ -406,7 +414,8 @@ def recommend(pursuit: Pursuit, today: Optional[dt.date] = None) -> Advice:
 
 
 def review(messages: Sequence[Message], llm, today: Optional[dt.date] = None,
-           only: Optional[Iterable[str]] = None, killed=None) -> List[Advice]:
+           only: Optional[Iterable[str]] = None, killed=None, aliases=None
+           ) -> List[Advice]:
     """Read the whole mailbox and say what to do about each live process.
 
     An employer you have killed is skipped before the model reads it, so a dead
@@ -415,10 +424,12 @@ def review(messages: Sequence[Message], llm, today: Optional[dt.date] = None,
     today = today or dt.date.today()
     wanted = {normalize_company(name) for name in (only or []) if name}
     advice: List[Advice] = []
-    for key, thread in group(messages).items():
+    for key, thread in group(messages, aliases).items():
         if wanted and key not in wanted:
             continue
         company = company_of(thread[0]) or key
+        if aliases is not None:
+            company = aliases.canonical(company)
         if killed is not None and killed.employer(company) is not None:
             continue
         for pursuit in read(thread, company, llm, today=today):

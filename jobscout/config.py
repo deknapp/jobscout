@@ -234,6 +234,11 @@ class Settings:
         return self.data_dir / "network"
 
     @property
+    def aliases_path(self) -> Path:
+        """Employer names that mean the same employer. Never in the repo."""
+        return self.data_dir / "aliases.json"
+
+    @property
     def dismissed_path(self) -> Path:
         """Leads you have killed. Never in the repo."""
         return self.data_dir / "dismissed.json"
