@@ -234,6 +234,11 @@ class Settings:
         return self.data_dir / "network"
 
     @property
+    def pursuits_path(self) -> Path:
+        """The last reading of your live search. Never in the repo."""
+        return self.data_dir / "pursuits.json"
+
+    @property
     def aliases_path(self) -> Path:
         """Employer names that mean the same employer. Never in the repo."""
         return self.data_dir / "aliases.json"

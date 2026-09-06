@@ -36,7 +36,7 @@ import json
 import re
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .corpus import normalize_company
 from .inbox import (ALERT, APPLICATION, CONSUMER_DOMAINS, INTERVIEW, Message,
@@ -411,6 +411,40 @@ def recommend(pursuit: Pursuit, today: Optional[dt.date] = None) -> Advice:
     advice.action = "One last note to %s, then close it out." % who
     advice.why = "Quiet %d days." % quiet
     return advice
+
+
+def save(path: Path, advice: Sequence[Advice]) -> Path:
+    """Cache a reading so the daily view costs nothing.
+
+    Reading the mailbox is the only expensive thing the tool does. Looking at
+    what it found should be free, or you stop looking.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(
+        {"read": dt.date.today().isoformat(),
+         "advice": [{"urgency": a.urgency, "action": a.action, "why": a.why,
+                     "pursuit": asdict(a.pursuit)} for a in advice]},
+        indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def load(path: Path) -> Tuple[str, List[Advice]]:
+    """The last reading, and the date it was taken."""
+    if not path.exists():
+        return "", []
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return "", []
+    fields = set(Pursuit.__dataclass_fields__)  # type: ignore[attr-defined]
+    found = []
+    for item in raw.get("advice", []):
+        data = {k: v for k, v in (item.get("pursuit") or {}).items() if k in fields}
+        data["evidence"] = [Evidence(**e) for e in data.get("evidence", [])
+                            if isinstance(e, dict)]
+        found.append(Advice(pursuit=Pursuit(**data), urgency=item.get("urgency", "later"),
+                            action=item.get("action", ""), why=item.get("why", "")))
+    return raw.get("read", ""), found
 
 
 def review(messages: Sequence[Message], llm, today: Optional[dt.date] = None,

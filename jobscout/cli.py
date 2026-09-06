@@ -18,6 +18,7 @@
     jobscout dismiss "<who or where>" --reason "..." [--employer]
     jobscout ingest --mbox ~/export.mbox --me you@example.com
     jobscout ingest --imap --user you@gmail.com   (app password in the env)
+    jobscout brief
 """
 from __future__ import annotations
 
@@ -401,6 +402,18 @@ def _killed(settings):
     return Dismissals(settings.dismissed_path)
 
 
+def _contact_history(settings):
+    """Everyone you have already spoken to, from LinkedIn and from your mail."""
+    from . import inbox as box, network as net
+
+    talked = net.load_conversations(settings.data_dir)
+    if settings.inbox_dir.exists():
+        messages = box.load_messages(settings.inbox_dir)
+        if messages:
+            talked.update(net.conversations_from_mail(box.correspondents(messages)))
+    return talked
+
+
 def _network_context(settings):
     """Everything the ranking needs, gathered from what jobscout already knows."""
     from .network import load_affiliations
@@ -567,7 +580,7 @@ def cmd_network(args: argparse.Namespace) -> int:
 
     # default: leads
     leads = net.rank(connections, affiliations, targets, profile,
-                     conversations=net.load_conversations(settings.data_dir),
+                     conversations=_contact_history(settings),
                      killed=_killed(settings))
     if args.bucket:
         leads = [l for l in leads if l.bucket == args.bucket]
@@ -704,6 +717,8 @@ def cmd_pursuits(args: argparse.Namespace) -> int:
 
     advice = live.review(messages, llm, only=only, killed=_killed(settings),
                          aliases=Aliases(settings.aliases_path))
+    if not args.company:
+        live.save(settings.pursuits_path, advice)
     if not advice:
         print("nothing live found")
         return 0
@@ -884,6 +899,91 @@ def cmd_alias(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- brief -----------------------------------------------------------------
+
+def cmd_brief(args: argparse.Namespace) -> int:
+    """One screen: what to do today, and who to talk to next.
+
+    Everything here is read from what previous runs already worked out, so it
+    is instant and free. Reading the mailbox is the expensive step; looking at
+    what it found should cost nothing, or you stop looking.
+    """
+    from . import inbox as box, network as net, pursuits as live
+
+    settings = load_settings(require_applications=False)
+    settings.ensure_data_dir()
+    today = dt.date.today()
+    print("Job search brief — %s\n" % today.isoformat())
+
+    # 1. What is live, and what it needs.
+    read_on, advice = live.load(settings.pursuits_path)
+    if not advice:
+        print("LIVE PURSUITS")
+        print("  nothing read yet — run `jobscout ingest` then `jobscout pursuits`\n")
+    else:
+        stale = ""
+        when = dt.date.fromisoformat(read_on) if read_on else None
+        if when and (today - when).days > 3:
+            stale = "  (read %d days ago — `jobscout pursuits` to refresh)" % (today - when).days
+        acting = [a for a in advice if a.urgency in ("now", "this week")]
+        print("LIVE PURSUITS — %d needing action of %d%s" % (len(acting), len(advice), stale))
+        for item in acting[:args.max]:
+            pursuit = item.pursuit
+            name = pursuit.company + (" — %s" % pursuit.role if pursuit.role else "")
+            if pursuit.requisition:
+                name += " (%s)" % pursuit.requisition
+            print("  [%s] %s" % (item.urgency, name))
+            print("      %s" % item.action)
+        waiting = [a for a in advice if a.urgency == "none" and a.pursuit.stage != "closed"]
+        if waiting:
+            print("  %d more are waiting on someone else; nothing to do." % len(waiting))
+        print()
+
+    # 2. Who to talk to, from the network.
+    snapshots = net.list_snapshots(settings.data_dir)
+    if snapshots:
+        connections = net.load_snapshot(snapshots[-1])
+        affiliations, targets, names, profile = _network_context(settings)
+        leads = net.rank(connections, affiliations, targets, profile,
+                         conversations=_contact_history(settings),
+                         killed=_killed(settings))
+        leads = [l for l in leads if l.bucket != net.REST and not l.killed]
+        print("PEOPLE — top of %d connection(s)" % len(connections))
+        for lead in leads[:args.max]:
+            print("  %-24s %s" % (lead.name[:24],
+                                  ("%s @ %s" % (lead.connection.position,
+                                                lead.connection.company))[:52]))
+            if lead.reasons:
+                print("      %s" % lead.reasons[0])
+        rows = net.company_coverage(connections, targets, names)
+        reachable = [name for name, people in rows if people]
+        print("  %d of %d target employers have someone inside.\n"
+              % (len(reachable), len(rows)))
+    else:
+        print("PEOPLE\n  no connections imported — `jobscout network import <export>`\n")
+
+    # 3. Inbound approaches gone quiet.
+    if settings.inbox_dir.exists():
+        messages = box.load_messages(settings.inbox_dir)
+        if messages:
+            _affil, targets, _names, profile = _network_context(settings)
+            ranked = box.follow_ups(box.outreach(messages), target_keys=targets,
+                                    policy=settings.location, killed=_killed(settings))
+            revivable = [f for f in ranked if f.score > 0 and not f.killed][:args.max]
+            if revivable:
+                print("INBOUND — recruiters who came to you and went quiet")
+                for item in revivable:
+                    entry = item.outreach
+                    print("  %-24s %s"
+                          % ((entry.person or "(name unknown)")[:24],
+                             (entry.role or entry.company or "")[:52]))
+                print()
+
+    print("Next: `jobscout pursuits` to re-read the mailbox, "
+          "`jobscout network leads` for the full list.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jobscout",
@@ -1053,6 +1153,11 @@ def build_parser() -> argparse.ArgumentParser:
     alias.add_argument("--suggest", action="store_true",
                        help="propose merges from people who write from two domains")
     alias.set_defaults(func=cmd_alias)
+
+    brief = subparsers.add_parser(
+        "brief", help="one screen: what to do today, and who to talk to next")
+    brief.add_argument("--max", type=int, default=6, help="rows per section")
+    brief.set_defaults(func=cmd_brief)
 
     return parser
 

@@ -484,6 +484,26 @@ def read_conversations(path: Path, me: str = "") -> Dict[str, Conversation]:
     return found
 
 
+def conversations_from_mail(correspondents: Sequence) -> Dict[str, Conversation]:
+    """Fold your mailbox into the contact history.
+
+    The connections file and the mailbox describe the same relationships and
+    share no identifier — one has profile URLs, the other addresses. Keying the
+    mail side on the person's name is weaker than a URL and occasionally wrong,
+    but the failure it prevents is the one that matters: recommending someone
+    you emailed last week as a fresh lead.
+    """
+    found: Dict[str, Conversation] = {}
+    for person in correspondents:
+        name = (getattr(person, "name", "") or "").strip().lower()
+        if not name:
+            continue
+        found["name:%s" % name] = Conversation(
+            name=person.name, url="", sent=person.sent, received=person.received,
+            last_sent=person.last_sent, last_received=person.last_received)
+    return found
+
+
 def save_conversations(data_dir: Path, conversations: Dict[str, Conversation]) -> Path:
     path = data_dir / "network" / "conversations.json"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -740,7 +760,10 @@ def rank(connections: Sequence[Connection],
         # name you messaged last week is not a lead, however good the match —
         # and a name you had a real exchange with two years ago is a far better
         # one than any stranger, because the introduction is already done.
-        talked = conversations.get(profile_key(connection.url))
+        # The profile URL is the strong key; the name is the fallback that lets
+        # a mailbox and a connections file describe the same person.
+        talked = (conversations.get(profile_key(connection.url))
+                  or conversations.get("name:%s" % connection.name.strip().lower()))
         if talked:
             days = talked.days_since(today)
             if days is None:

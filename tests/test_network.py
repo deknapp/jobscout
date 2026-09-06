@@ -260,3 +260,20 @@ def test_a_renamed_employer_is_not_reported_as_a_move():
     after = [Connection(url="https://x/a", first_name="A", last_name="A",
                         company="OpenEye, Cadence Molecular Sciences", position="Engineer")]
     assert net.diff_snapshots(before, after) == []
+
+
+def test_someone_you_emailed_last_week_is_not_offered_as_a_fresh_lead():
+    """The connections file and the mailbox describe the same relationships and
+    share no identifier. Without a name fallback, the tool cheerfully
+    recommends contacting a person you wrote to on Monday."""
+    from jobscout.inbox import Correspondent
+
+    talked = net.conversations_from_mail([
+        Correspondent(email="mary@example.com", name="Mary Pitman",
+                      sent=1, last_sent="2026-08-31")])
+    person = Connection(first_name="Mary", last_name="Pitman", url="https://x/mary",
+                        company="Kestrel Bio", position="Head of Simulation",
+                        connected_on="2021-01-01")
+    lead = net.rank([person], [], {"Kestrel Bio": "applied"},
+                    conversations=talked, today=dt.date(2026, 9, 5))[0]
+    assert "5 days ago" in " ".join(lead.reasons)
