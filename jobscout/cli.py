@@ -16,6 +16,8 @@
     jobscout inbox applications | recruiters | contacts
     jobscout pursuits [--company NAME] [--all]
     jobscout dismiss "<who or where>" --reason "..." [--employer]
+    jobscout ingest --mbox ~/export.mbox --me you@example.com
+    jobscout ingest --imap --user you@gmail.com   (app password in the env)
 """
 from __future__ import annotations
 
@@ -52,6 +54,11 @@ JOBSCOUT_DATA_DIR={data}
 JOBSCOUT_BACKEND=cli
 JOBSCOUT_MODEL_CHEAP=claude-haiku-4-5
 JOBSCOUT_MODEL_STRONG=claude-opus-5
+
+# Only needed for `jobscout ingest --imap`. A Gmail APP password, not your
+# account password — create one at https://myaccount.google.com/apppasswords.
+# Leave it unset and you will be prompted instead, which keeps it out of files.
+# JOBSCOUT_IMAP_PASSWORD=
 
 # Hard filters.
 JOBSCOUT_ALLOWED_STATES={states}
@@ -765,6 +772,65 @@ def cmd_dismiss(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- ingest ----------------------------------------------------------------
+
+IMAP_PASSWORD_ENV = "JOBSCOUT_IMAP_PASSWORD"
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    import datetime as _dt
+
+    from . import ingest, inbox as box
+
+    settings = load_settings(require_applications=False)
+    settings.ensure_data_dir()
+    since = None
+    if args.since_years:
+        since = dt.date.today() - dt.timedelta(days=int(365.25 * args.since_years))
+
+    def progress(count: int) -> None:
+        sys.stderr.write("\r  read %d…" % count)
+        sys.stderr.flush()
+
+    if args.mbox:
+        me = [a for a in (args.me or "").split(",") if a.strip()]
+        if not me:
+            return _fail("--me is required for an mbox: without your own address "
+                         "nothing can tell which messages you sent")
+        messages = ingest.read_mbox(Path(args.mbox), me, since=since,
+                                    on_progress=progress)
+    elif args.imap:
+        if not args.user:
+            return _fail("--user is required for IMAP")
+        password = os.environ.get(IMAP_PASSWORD_ENV, "")
+        if not password:
+            import getpass
+
+            sys.stderr.write(
+                "App password for %s (not your account password; create one at\n"
+                "https://myaccount.google.com/apppasswords). Set %s to skip this.\n"
+                % (args.user, IMAP_PASSWORD_ENV))
+            password = getpass.getpass("app password: ")
+        if not password:
+            return _fail("no password given")
+        messages = ingest.read_imap(args.host, args.user, password, since=since,
+                                    limit=args.limit, on_progress=progress)
+    else:
+        return _fail("choose a source: --mbox PATH or --imap")
+
+    sys.stderr.write("\r")
+    if not messages:
+        print("no messages found in the window")
+        return 0
+    path = box.save_messages(
+        settings.inbox_dir / ("mail-%s.json" % dt.date.today().isoformat()), messages)
+    people = len({m.counterpart for m in messages if m.counterpart})
+    print("ingested %d message(s) from %d correspondent(s)" % (len(messages), people))
+    print("  saved to %s" % redact(path))
+    print("  now run: jobscout pursuits")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jobscout",
@@ -911,6 +977,21 @@ def build_parser() -> argparse.ArgumentParser:
     dismiss.add_argument("--undo", help="put someone back in play")
     dismiss.add_argument("--list", action="store_true")
     dismiss.set_defaults(func=cmd_dismiss)
+
+    ingest = subparsers.add_parser(
+        "ingest", help="read your mail onto disk so the rest of the tool can use it")
+    source = ingest.add_mutually_exclusive_group()
+    source.add_argument("--mbox", help="an exported mailbox file (no credential needed)")
+    source.add_argument("--imap", action="store_true",
+                        help="read the server directly (needs an app password)")
+    ingest.add_argument("--me", help="your own address(es), comma separated — mbox only")
+    ingest.add_argument("--user", help="the mailbox to log into — IMAP only")
+    ingest.add_argument("--host", default="imap.gmail.com")
+    ingest.add_argument("--limit", type=int, default=4000,
+                        help="most recent N messages at most")
+    ingest.add_argument("--since-years", dest="since_years", type=float, default=2.0,
+                        help="ignore mail older than this (default 2)")
+    ingest.set_defaults(func=cmd_ingest)
 
     return parser
 
