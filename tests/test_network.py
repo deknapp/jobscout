@@ -227,7 +227,7 @@ def test_a_rename_is_not_two_employers():
     that as two jobs makes everyone met either side of it look like a mover."""
     assert net.same_employer("OpenEye Scientific", "OpenEye, Cadence Molecular Sciences")
     assert net.same_employer("Gate Bioscience", "Gate Bioscience, Inc.")
-    assert net.same_employer("Genesis Molecular AI", "Genesis")
+    assert net.same_employer("Analytical Engines", "Analytical")
 
 
 def test_a_shared_generic_word_is_not_a_shared_employer():
@@ -269,9 +269,9 @@ def test_someone_you_emailed_last_week_is_not_offered_as_a_fresh_lead():
     from jobscout.inbox import Correspondent
 
     talked = net.conversations_from_mail([
-        Correspondent(email="mary@example.com", name="Mary Pitman",
+        Correspondent(email="ada@example.com", name="Ada Vance",
                       sent=1, last_sent="2026-08-31")])
-    person = Connection(first_name="Mary", last_name="Pitman", url="https://x/mary",
+    person = Connection(first_name="Ada", last_name="Vance", url="https://x/ada",
                         company="Kestrel Bio", position="Head of Simulation",
                         connected_on="2021-01-01")
     lead = net.rank([person], [], {"Kestrel Bio": "applied"},
@@ -287,8 +287,8 @@ def test_someone_contacted_recently_is_marked_so_the_view_can_hide_them():
     from jobscout.inbox import Correspondent
 
     talked = net.conversations_from_mail([
-        Correspondent(email="mary.pitman@example.com", sent=1, last_sent="2026-08-31")])
-    person = Connection(first_name="Mary", last_name="Pitman", url="https://x/m",
+        Correspondent(email="ada.vance@example.com", sent=1, last_sent="2026-08-31")])
+    person = Connection(first_name="Ada", last_name="Vance", url="https://x/m",
                         company="Kestrel Bio", position="Head of Simulation",
                         connected_on="2021-01-01")
     lead = net.rank([person], [], {"Kestrel Bio": "applied"},
@@ -303,11 +303,11 @@ def test_linkedin_and_mail_are_combined_rather_than_one_winning():
     from jobscout.inbox import Correspondent
 
     talked = net.conversations_from_mail([
-        Correspondent(email="mary.pitman@example.com", sent=1, last_sent="2026-08-31")])
-    talked["mary"] = net.Conversation(name="Mary Pitman", url="https://x/in/mary",
+        Correspondent(email="ada.vance@example.com", sent=1, last_sent="2026-08-31")])
+    talked["mary"] = net.Conversation(name="Ada Vance", url="https://x/in/mary",
                                       sent=3, received=3, last_sent="2024-04-15",
                                       last_received="2024-04-15")
-    person = Connection(first_name="Mary", last_name="Pitman",
+    person = Connection(first_name="Ada", last_name="Vance",
                         url="https://www.linkedin.com/in/mary",
                         company="Kestrel Bio", position="Head of Simulation",
                         connected_on="2021-01-01")
@@ -330,13 +330,13 @@ def test_connected_within_keeps_recent_and_drops_old(tmp_path, monkeypatch):
 
     today = dt.date.today()
     recent = Connection(first_name="Recent", last_name="Person",
-                        company="Iambic Therapeutics", position="Engineer",
+                        company="Aurora Instruments", position="Engineer",
                         connected_on=(today - dt.timedelta(days=200)).isoformat())
     old = Connection(first_name="Old", last_name="Person",
-                     company="Iambic Therapeutics", position="Engineer",
+                     company="Aurora Instruments", position="Engineer",
                      connected_on=(today - dt.timedelta(days=8 * 365)).isoformat())
     undated = Connection(first_name="Undated", last_name="Person",
-                         company="Iambic Therapeutics", position="Engineer",
+                         company="Aurora Instruments", position="Engineer",
                          connected_on="")
 
     assert recent.connected_date is not None

@@ -18,7 +18,7 @@ def parse(text):
     return email.message_from_string(text, policy=email.policy.default)
 
 
-PLAIN = """From: Lily Kim <lily@kestrel.com>
+PLAIN = """From: Robin Vance <robin@kestrel.com>
 To: me@example.com
 Subject: Re: the role
 Date: Wed, 19 Aug 2026 07:59:00 -0600
@@ -49,13 +49,13 @@ def test_the_thread_root_groups_a_deep_reply_with_its_original():
 def test_direction_and_counterpart_are_worked_out_from_the_headers():
     inbound = to_record(parse(PLAIN), ME)
     assert inbound.from_me is False
-    assert inbound.sender == "lily@kestrel.com"
+    assert inbound.sender == "robin@kestrel.com"
 
-    outbound = to_record(parse(PLAIN.replace("From: Lily Kim <lily@kestrel.com>",
+    outbound = to_record(parse(PLAIN.replace("From: Robin Vance <robin@kestrel.com>",
                                              "From: Me <me@example.com>")
-                               .replace("To: me@example.com", "To: lily@kestrel.com")), ME)
+                               .replace("To: me@example.com", "To: robin@kestrel.com")), ME)
     assert outbound.from_me is True
-    assert outbound.to == "lily@kestrel.com"
+    assert outbound.to == "robin@kestrel.com"
 
 
 def test_a_note_you_sent_to_yourself_is_not_correspondence():
@@ -102,8 +102,8 @@ def test_signature_and_platform_footers_are_dropped():
 
 # --- mbox -------------------------------------------------------------------
 
-MBOX = """From lily@kestrel.com Wed Aug 19 07:59:00 2026
-From: Lily Kim <lily@kestrel.com>
+MBOX = """From robin@kestrel.com Wed Aug 19 07:59:00 2026
+From: Robin Vance <robin@kestrel.com>
 To: me@example.com
 Subject: Re: the role
 Date: Wed, 19 Aug 2026 07:59:00 -0600
@@ -164,7 +164,7 @@ def test_imap_reads_all_mail_so_a_reply_and_its_original_land_together():
     found = ingest.read_imap("host", "me@example.com", "pw", connection=fake)
     assert fake.selected == ingest.ALL_MAIL
     assert len(found) == 1
-    assert found[0].sender == "lily@kestrel.com"
+    assert found[0].sender == "robin@kestrel.com"
 
 
 def test_the_since_date_is_passed_to_the_server_not_filtered_afterwards():

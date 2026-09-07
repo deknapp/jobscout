@@ -104,16 +104,16 @@ def test_only_your_own_decisions_hide_a_job():
     path = Path(tempfile.mkdtemp()) / "history.jsonl"
     history = History(path)
 
-    shown = Posting(company="Iambic", title="Software Engineer",
-                    url="https://jobs.ashbyhq.com/iambic/1")
-    stale = Posting(company="Iambic", title="ML Scientist",
-                    url="https://jobs.ashbyhq.com/iambic/2")
-    unchecked = Posting(company="Iambic", title="Platform Engineer",
-                        url="https://jobs.ashbyhq.com/iambic/3")
-    applied = Posting(company="Iambic", title="Research Engineer",
-                      url="https://jobs.ashbyhq.com/iambic/4")
-    dismissed = Posting(company="Iambic", title="Medical Writer",
-                        url="https://jobs.ashbyhq.com/iambic/5")
+    shown = Posting(company="Aurora Instruments", title="Software Engineer",
+                    url="https://jobs.ashbyhq.com/aurora/1")
+    stale = Posting(company="Aurora Instruments", title="ML Scientist",
+                    url="https://jobs.ashbyhq.com/aurora/2")
+    unchecked = Posting(company="Aurora Instruments", title="Platform Engineer",
+                        url="https://jobs.ashbyhq.com/aurora/3")
+    applied = Posting(company="Aurora Instruments", title="Research Engineer",
+                      url="https://jobs.ashbyhq.com/aurora/4")
+    dismissed = Posting(company="Aurora Instruments", title="Medical Writer",
+                        url="https://jobs.ashbyhq.com/aurora/5")
 
     history.record(shown, RECOMMENDED)
     history.record(stale, DROPPED, "posted 78 days ago (limit 30)")

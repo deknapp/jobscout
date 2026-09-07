@@ -155,3 +155,68 @@ def test_init_does_not_freeze_the_tuning_defaults_into_a_user_env():
                    "JOBSCOUT_MAX_WORKERS", "JOBSCOUT_PROPOSE_BATCH"):
             pinned.append(key)
     assert not pinned, "these are pinned in a generated .env: %s" % pinned
+
+
+# ---------------------------------------------------------------------------
+# Fixtures must not name real people or reveal real applications.
+#
+# This repository is linked from job applications, which means the people who
+# read it include the employers it was used to apply to. A test fixture that
+# names a real hiring manager, or that uses a real employer in a context
+# implying the author applied there, is a disclosure about *other people* and
+# about live negotiations -- not merely an untidy test.
+#
+# The rule: every human in a fixture comes from the invented cast below, and
+# every employer is invented too. The cast is listed here rather than hidden so
+# that adding to it is a deliberate act.
+# ---------------------------------------------------------------------------
+
+FICTIONAL_PEOPLE = {"Ada Vance", "Robin Vance", "Dana Fell", "Greg Taylor"}
+FICTIONAL_EMPLOYERS = {
+    "Kestrel Bio", "Acme", "Acme Labs", "Globex", "Aurora Instruments",
+    "Analytical Engines", "Some Lab", "Unreachable Corp",
+}
+
+#: Domains a fixture address may use: placeholders, plus the real
+#: applicant-tracking and job-board vendors whose URL shapes are the thing
+#: under test.
+ALLOWED_EMAIL_DOMAINS = {
+    "example.com", "kestrel.com", "somelab.gov", "agency.com", "elsewhere.com",
+    "gmail.com", "b.com",
+    "ashbyhq.com", "greenhouse.io", "myworkday.com", "icims.com",
+    "hire.lever.co", "indeed.com", "linkedin.com",
+}
+
+EMAIL = __import__("re").compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+
+
+def _tracked_text():
+    for path in _tracked_files():
+        if path.suffix in {".py", ".md"} and path.exists():
+            yield path, path.read_text(errors="replace")
+
+
+def test_no_real_email_address_is_committed():
+    """Every address in the tree is a placeholder or a vendor domain."""
+    offenders = []
+    for path, text in _tracked_text():
+        for domain in EMAIL.findall(text):
+            if domain.lower() not in ALLOWED_EMAIL_DOMAINS:
+                offenders.append(f"{path.name}: {domain}")
+    assert not offenders, (
+        "Unrecognised email domain in a tracked file. If this is a new "
+        "placeholder, add it to ALLOWED_EMAIL_DOMAINS; if it is a real "
+        f"person's address, remove it: {offenders}"
+    )
+
+
+def test_the_authors_own_address_is_not_committed():
+    """It belongs in the environment, never in the tree.
+
+    The needle is assembled from pieces so that this file does not itself
+    contain the address it is looking for -- the first version of this test
+    failed on its own source.
+    """
+    needle = "nathaniel" + "." + "knapp@"
+    for path, text in _tracked_text():
+        assert needle not in text, f"{path.name} contains a personal address"

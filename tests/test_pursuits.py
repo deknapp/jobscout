@@ -33,7 +33,7 @@ def test_job_alert_spam_never_reaches_a_prompt():
 
 
 def test_a_person_at_an_employer_domain_is_read():
-    real = Message(id="1", sender="lily@kestrel.com", to="me@gmail.com",
+    real = Message(id="1", sender="robin@kestrel.com", to="me@gmail.com",
                    date="2026-08-19T00:00:00Z", subject="Re: the role",
                    body="Thanks Nathan - there's still no req posted.")
     assert pursuits.is_human_mail(real)
@@ -50,7 +50,7 @@ def test_the_domain_beats_the_prose_when_naming_the_employer():
 
 
 def test_your_own_outbound_mail_is_part_of_the_thread():
-    mine = Message(id="1", sender="me@gmail.com", to="lily@kestrel.com",
+    mine = Message(id="1", sender="me@gmail.com", to="robin@kestrel.com",
                    from_me=True, date="2026-08-31T00:00:00Z",
                    subject="Checking in", body="Any information on timing?")
     assert pursuits.is_human_mail(mine)
@@ -62,15 +62,15 @@ def test_your_own_outbound_mail_is_part_of_the_thread():
 def test_dates_and_direction_are_taken_from_the_headers():
     """Asked for a date, a model produces a plausible one. The mailbox knows."""
     thread = [
-        Message(id="1", sender="lily@kestrel.com", to="me@gmail.com",
+        Message(id="1", sender="robin@kestrel.com", to="me@gmail.com",
                 date="2026-08-19T00:00:00Z", subject="Re: role", body="No req yet."),
-        Message(id="2", sender="me@gmail.com", to="lily@kestrel.com", from_me=True,
+        Message(id="2", sender="me@gmail.com", to="robin@kestrel.com", from_me=True,
                 date="2026-08-31T00:00:00Z", subject="Checking in", body="Any news?"),
     ]
     llm, _ = llm_returning([{"role": "PM Lead", "stage": "interviewing",
                              "ball_with": "them", "blocker": "no requisition posted",
-                             "people": ["Lily Kim"],
-                             "evidence": [{"date": "2026-08-19", "who": "Lily Kim",
+                             "people": ["Robin Vance"],
+                             "evidence": [{"date": "2026-08-19", "who": "Robin Vance",
                                            "quote": "there's still no req posted"}]}])
     found = pursuits.read(thread, "Kestrel", llm, today=TODAY)
     assert len(found) == 1
@@ -113,14 +113,14 @@ def test_a_stage_the_model_invents_is_not_accepted():
 
 def advice_for(**kwargs):
     kwargs.setdefault("company", "Kestrel")
-    kwargs.setdefault("people", ["Lily"])
+    kwargs.setdefault("people", ["Robin"])
     return pursuits.recommend(Pursuit(**kwargs), today=TODAY)
 
 
 def test_an_outstanding_deliverable_outranks_everything():
     a = advice_for(stage="assignment", ball_with="you", last_activity="2026-09-04")
     assert a.urgency == "now"
-    assert "Send what Lily asked for" in a.action
+    assert "Send what Robin asked for" in a.action
 
 
 def test_a_stated_structural_blocker_is_not_a_silence_problem():
@@ -128,7 +128,7 @@ def test_a_stated_structural_blocker_is_not_a_silence_problem():
     you does not change it — the useful move is sideways, to someone who knows
     whether the blocker is real."""
     a = advice_for(stage="interviewing", ball_with="them", last_activity="2026-08-31",
-                   people=["Lily", "Ash", "Josh"], blocker="no requisition posted yet")
+                   people=["Robin", "Casey", "Jordan"], blocker="no requisition posted yet")
     assert "ask someone else inside Kestrel" in a.action
     assert "no requisition posted yet" in a.why
     assert a.urgency != "now"
@@ -151,7 +151,7 @@ def test_a_rejection_keeps_the_person_even_though_the_role_is_gone():
     a = advice_for(stage="closed", ball_with="nobody", last_activity="2026-09-01",
                    blocker="They went with another candidate.")
     assert a.urgency == "none"
-    assert "Keep Lily as a contact" in a.action
+    assert "Keep Robin as a contact" in a.action
 
 
 def test_what_needs_doing_now_sorts_above_what_can_wait():
@@ -165,13 +165,13 @@ def test_what_needs_doing_now_sorts_above_what_can_wait():
 
 
 def test_review_reads_each_employer_once():
-    thread = [Message(id="1", sender="lily@kestrel.com", to="me@gmail.com",
+    thread = [Message(id="1", sender="robin@kestrel.com", to="me@gmail.com",
                       date="2026-08-19T00:00:00Z", subject="Re: role", body="No req."),
               Message(id="2", sender="jobs-noreply@linkedin.com",
                       date="2026-09-01T00:00:00Z", subject="spam",
                       snippet="Discover roles that match your interests")]
     llm, backend = llm_returning([{"role": "PM Lead", "stage": "interviewing",
-                                   "ball_with": "them", "people": ["Lily Kim"]}])
+                                   "ball_with": "them", "people": ["Robin Vance"]}])
     found = pursuits.review(thread, llm, today=TODAY)
     assert len(found) == 1
     assert len(backend.prompts) == 1          # the spam never reached a prompt
@@ -217,7 +217,7 @@ def test_going_sideways_needs_somebody_to_go_sideways_to():
     assert "ask someone else" not in alone.action.lower()
 
     crowd = advice_for(stage="interviewing", ball_with="them",
-                       people=["Lily", "Ash", "Josh"],
+                       people=["Robin", "Casey", "Jordan"],
                        last_activity="2026-08-31", blocker="no requisition posted yet")
     assert "ask someone else" in crowd.action.lower()
 

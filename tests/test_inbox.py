@@ -95,23 +95,23 @@ def test_the_company_s_own_branding_beats_its_tenant_slug():
 
 
 def test_a_job_title_is_never_returned_as_the_employer():
-    """"your interest in the Software Engineer, Platform role at Benchling"
+    """"your interest in the Software Engineer, Platform role at Globex"
     reads exactly like a company name to a regex, and used to return one."""
     m = msg(sender="no-reply@ashbyhq.com", date="2026-07-17T01:20:13Z",
-            subject="Your Benchling Application | Software Engineer, Platform "
+            subject="Your Globex Application | Software Engineer, Platform "
                     "(Developer Experience)",
             snippet="Hi Nathaniel, Thank you for your interest in the Software "
-                    "Engineer, Platform (Developer Experience) role at Benchling.")
-    assert inbox.extract_company(m) == "Benchling"
+                    "Engineer, Platform (Developer Experience) role at Globex.")
+    assert inbox.extract_company(m) == "Globex"
     assert inbox.extract_role(m) == "Software Engineer, Platform (Developer Experience)"
 
 
 def test_a_multi_tenant_vendor_falls_back_to_the_boilerplate():
     m = msg(sender="no-reply@ashbyhq.com", date="2025-12-28T06:31:12Z",
-            subject="Thank You for Applying to Genesis Molecular AI",
-            snippet="Hi Nathan, Thank you for your interest in Genesis Molecular AI! "
+            subject="Thank You for Applying to Analytical Engines",
+            snippet="Hi Nathan, Thank you for your interest in Analytical Engines! "
                     "We've received your application for the Product Manager role.")
-    assert inbox.extract_company(m) == "Genesis Molecular AI"
+    assert inbox.extract_company(m) == "Analytical Engines"
 
 
 def test_boilerplate_running_on_past_the_name_is_cut():
@@ -327,9 +327,9 @@ def test_a_credential_after_a_name_is_not_part_of_the_name():
 
 
 def test_an_address_supplies_the_name_when_the_header_does_not():
-    """A mail you sent says "Hi Mary," rather than introducing her, so the
+    """A mail you sent says "Hi Ada," rather than introducing her, so the
     address is often the only place her name survives."""
-    person = inbox.Correspondent(email="mary.pitman@example.com")
-    assert person.named == "Mary Pitman"
+    person = inbox.Correspondent(email="ada.vance@example.com")
+    assert person.named == "Ada Vance"
     assert inbox.Correspondent(email="info@example.com").named == ""
     assert inbox.Correspondent(email="x@example.com", name="Given Name").named == "Given Name"

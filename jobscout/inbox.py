@@ -143,7 +143,7 @@ _RELAY_HEADER = re.compile(
 _CREDENTIALS = re.compile(r"\s+(?:MSc|MS|MBA|PhD|PHR|SHRM|CPC|BSc|MA)\.?$", re.I)
 
 #: The employer behind an approach. Tried before the applicant-tracking
-#: patterns for recruiter mail, because "a key need we have here at SandboxAQ"
+#: patterns for recruiter mail, because "a key need we have here at Kestrel Bio"
 #: names the employer and no ATS phrasing will ever match it.
 _HIRING_PATTERNS = (
     re.compile(r"(?:here|we|role|position|opening)\s+(?:at|with)\s+"
@@ -596,7 +596,7 @@ class Correspondent:
         """Their name, falling back to the one their address spells out.
 
         Most business addresses are the person's name with a dot in it, and a
-        mail you sent says "Hi Mary," rather than introducing her — so the
+        mail you sent says "Hi Ada," rather than introducing her — so the
         header is often the only place the name survives.
         """
         if self.name:

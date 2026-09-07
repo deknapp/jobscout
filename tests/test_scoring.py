@@ -88,9 +88,9 @@ def _scored(company, title, composite):
 
 
 def test_the_best_role_at_each_employer_is_the_one_offered():
-    board = [_scored("Benchling", "Data Engineer", 90),
-             _scored("Benchling", "Technical Solution Architect", 88),
-             _scored("Benchling", "Solutions Delivery Manager", 70),
+    board = [_scored("Globex", "Data Engineer", 90),
+             _scored("Globex", "Technical Solution Architect", 88),
+             _scored("Globex", "Solutions Delivery Manager", 70),
              _scored("Booz Allen Hamilton", "Software Developer, Senior", 80)]
     kept, held = best_per_company(board, keep=1)
 
@@ -102,11 +102,11 @@ def test_the_best_role_at_each_employer_is_the_one_offered():
 
 def test_a_legible_board_no_longer_supplies_a_quarter_of_the_list():
     """The real shape: 11 of 40 roles came from one employer on one ATS."""
-    board = ([_scored("Benchling", "Role %d" % i, 90 - i) for i in range(11)]
+    board = ([_scored("Globex", "Role %d" % i, 90 - i) for i in range(11)]
              + [_scored("Employer %d" % i, "Role", 60 - i) for i in range(29)])
     kept, held = best_per_company(board, keep=1)
 
-    assert sum(1 for p in kept if p.company == "Benchling") == 1
+    assert sum(1 for p in kept if p.company == "Globex") == 1
     assert len(kept) == 30 and len(held) == 10
 
 
@@ -134,9 +134,9 @@ def test_a_cap_below_one_still_keeps_the_best_role():
 def test_the_held_back_count_reaches_the_report(tmp_path):
     from jobscout import report
 
-    best = _scored("Benchling", "Data Engineer", 90)
+    best = _scored("Globex", "Data Engineer", 90)
     best.also_hiring = 4
     best.url = "https://jobs.ashbyhq.com/benchling/1"
     best.verified = "live"
     text = report.render([best], [], {})
-    assert "4 more open role(s) at Benchling" in text
+    assert "4 more open role(s) at Globex" in text

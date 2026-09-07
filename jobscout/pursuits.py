@@ -167,7 +167,7 @@ def bucket_key(message: Message) -> str:
     """Which pile a message belongs in.
 
     Mail from a company domain groups by employer, because that is what ties
-    Lily's thread to Ash's. Everything else groups by conversation: two
+    one recruiter's thread to a hiring manager's. Everything else groups by conversation: two
     recruiters who never named their client are two separate pursuits, not one.
     """
     company = normalize_company(company_of(message))
@@ -404,7 +404,7 @@ def recommend(pursuit: Pursuit, today: Optional[dt.date] = None) -> Advice:
 
     if pursuit.blocker and len(pursuit.people) > 1:
         # A stated structural blocker is not a silence problem, and chasing it
-        # harder does not move it. This is the Lily Kim case: the honest read is
+        # harder does not move it. The honest read in that situation is
         # that there is nothing to chase, and the useful move is sideways — but
         # only where there is genuinely someone else to move to.
         advice.urgency = "later" if quiet < GONE_QUIET else "this week"
