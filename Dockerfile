@@ -17,7 +17,12 @@ FROM python:3.12-slim AS runtime
 
 # Unprivileged, with a fixed uid so the manifests can pin runAsUser and the
 # state volume can be owned by something specific rather than by root.
-RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin jobscout
+# The user's home is /app. test_privacy.py refuses user-directory paths
+# anywhere in the source tree, because that is how somebody's personal path
+# leaks into a public repository. The guard cannot tell that this one belongs
+# to a container's own account, and the right answer is to move the path
+# rather than loosen a guard that exists to catch a real mistake.
+RUN useradd --uid 10001 --home-dir /app --create-home --shell /usr/sbin/nologin jobscout
 
 COPY --from=builder /opt/venv /opt/venv
 
@@ -33,7 +38,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN mkdir -p /data && chown 10001:10001 /data
 VOLUME ["/data"]
 
-WORKDIR /home/jobscout
+WORKDIR /app
 USER 10001
 
 ENTRYPOINT ["jobscout"]
