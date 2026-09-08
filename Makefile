@@ -69,15 +69,21 @@ deploy: ## apply the manifests
 
 .PHONY: secret
 secret: ## put your own API key in the cluster, without writing it to a file
-	@test -n "$$ANTHROPIC_API_KEY" || { \
-	  echo "ANTHROPIC_API_KEY is not set."; \
-	  echo "The free stages -- board discovery, reading ATS boards -- work without it."; \
-	  echo "The model stages do not. Export it and re-run 'make secret' when you want them."; \
-	  exit 0; }
-	kubectl -n $(NS) create secret generic jobscout-secrets \
-	  --from-literal=ANTHROPIC_API_KEY="$$ANTHROPIC_API_KEY" \
-	  --dry-run=client -o yaml | kubectl apply -f -
-	kubectl -n $(NS) rollout restart deployment/web
+	@# One shell, not four. Make runs each recipe line in its own shell, so an
+	@# `exit 0` on the guard line ends that shell and Make cheerfully carries
+	@# on to the next -- which is how this printed "not set" and then created
+	@# the secret with an empty value anyway.
+	@if [ -z "$$ANTHROPIC_API_KEY" ]; then \
+	  echo "ANTHROPIC_API_KEY is not set — leaving the key empty."; \
+	  echo "The free stages (board discovery, reading ATS boards) work without it."; \
+	  echo "The model stages do not. Export it and re-run 'make secret'."; \
+	else \
+	  kubectl -n $(NS) create secret generic jobscout-secrets \
+	    --from-literal=ANTHROPIC_API_KEY="$$ANTHROPIC_API_KEY" \
+	    --dry-run=client -o yaml | kubectl apply -f - ; \
+	  kubectl -n $(NS) rollout restart deployment/web ; \
+	  echo "key installed"; \
+	fi
 
 .PHONY: seed
 seed: ## copy your existing ~/.jobscout into the cluster's volume
