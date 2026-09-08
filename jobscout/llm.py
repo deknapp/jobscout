@@ -38,6 +38,24 @@ from .budget import Budget, NullSpendStore
 
 WEB_TOOLS = ("WebSearch", "WebFetch")
 
+# How far a single web-enabled call may range. These were both 8, and a
+# measured run showed why that matters: 18 calls made 127 searches -- close to
+# the ceiling on every one -- and cost $13.79, of which the searches were only
+# $1.27. The rest was tokens, because each fetch pulls a whole page into the
+# request and a large page is ~25,000 tokens. Eight fetches is 100-200k input
+# tokens for one call.
+#
+# A ceiling is not a target, but a model given eight will generally use eight,
+# so the ceiling is the setting that matters. Three searches and three fetches
+# is enough to find a careers board or check whether a posting is still up --
+# the two things these calls actually do.
+MAX_WEB_SEARCHES = int(os.environ.get("JOBSCOUT_MAX_WEB_SEARCHES", "3"))
+MAX_WEB_FETCHES = int(os.environ.get("JOBSCOUT_MAX_WEB_FETCHES", "3"))
+#: Cap on how much of any one page enters the request. Unset, a 500kB document
+#: costs whatever it costs; jobscout only needs the part of a job page that
+#: says the title, the location and whether it is still open.
+MAX_FETCH_TOKENS = int(os.environ.get("JOBSCOUT_MAX_FETCH_TOKENS", "6000"))
+
 
 class LLMError(RuntimeError):
     pass
@@ -249,8 +267,9 @@ def _server_tools(caps: Dict[str, Any]) -> List[Dict[str, Any]]:
     else:
         search, fetch = "web_search_20250305", "web_fetch_20250910"
     return [
-        {"type": search, "name": "web_search", "max_uses": 8},
-        {"type": fetch, "name": "web_fetch", "max_uses": 8},
+        {"type": search, "name": "web_search", "max_uses": MAX_WEB_SEARCHES},
+        {"type": fetch, "name": "web_fetch", "max_uses": MAX_WEB_FETCHES,
+         "max_content_tokens": MAX_FETCH_TOKENS},
     ]
 
 
