@@ -309,10 +309,19 @@ def profile_tokens(profile: Dict) -> set:
     return wanted
 
 
-#: A board this small is passed through untouched. Under a handful of roles it
-#: is cheaper to rank them all properly than to risk discarding the one with an
-#: idiosyncratic title ("Member of Technical Staff"), which is exactly what a
-#: token overlap gets wrong.
+#: A board this small does not get RANKED down to the top few. Under a handful
+#: of roles it is cheaper to rank them all properly than to risk discarding the
+#: one with an idiosyncratic title ("Member of Technical Staff"), which is
+#: exactly what a token overlap gets wrong.
+#:
+#: It has never been a reason to keep a role scoring ZERO. That was a real bug:
+#: the size check came first and returned the board untouched, so a pharma
+#: company contributing eight roles handed over its patent counsel, its
+#: litigation director, its medical-affairs director and its patient-advocacy
+#: director intact, and each one was verified and scored at cost. An
+#: idiosyncratic title scores LOW; a zero means not one word of it overlaps
+#: anything the candidate is aiming at, which is a different profession, not a
+#: near miss.
 SMALL_BOARD = 8
 
 
@@ -325,10 +334,15 @@ def narrow_to_relevant(postings: Sequence[Posting], profile: Dict,
     wastes its attention on roles nobody is going to apply for.
     """
     postings = list(postings)
+    scored = [(title_relevance(p.title, profile), p) for p in postings]
+
+    # Zero relevance is a different profession. It goes whatever the board size.
+    plausible = [p for relevance, p in scored if relevance > 0]
     if len(postings) <= SMALL_BOARD:
-        return postings, 0
-    scored = sorted(postings, key=lambda p: -title_relevance(p.title, profile))
-    kept = [p for p in scored if title_relevance(p.title, profile) > 0][:keep]
+        return plausible, len(postings) - len(plausible)
+
+    ranked = sorted(plausible, key=lambda p: -title_relevance(p.title, profile))
+    kept = ranked[:keep]
     return kept, len(postings) - len(kept)
 
 

@@ -20,12 +20,53 @@ def test_an_unrelated_title_scores_zero():
     assert title_relevance("Dental Hygienist", PROFILE) == 0.0
 
 
-def test_a_tiny_board_is_never_trimmed():
-    """On a handful of roles, an unusual title is what a token overlap loses."""
+def test_a_tiny_board_is_not_ranked_down_to_its_top_few():
+    """Small boards keep everything PLAUSIBLE, rather than the best `keep`.
+
+    The point of the size check is that on a handful of roles it is cheaper to
+    rank them all than to trust a token overlap to pick the best three.
+    """
     postings = [Posting(title=t) for t in
-                ["Data Engineer", "Chief of Staff", "Member of Technical Staff"]]
-    kept, dropped = narrow_to_relevant(postings, PROFILE, keep=25)
+                ["Data Engineer", "Research Software Engineer",
+                 "Senior Software Engineer, Pipelines"]]
+    kept, dropped = narrow_to_relevant(postings, PROFILE, keep=1)
     assert dropped == 0 and len(kept) == 3
+
+
+def test_a_different_profession_is_dropped_even_on_a_tiny_board():
+    """The bug this rule exists for.
+
+    Eli Lilly contributed eight in-area roles, which is not more than
+    SMALL_BOARD, so the whole board went through untouched: patent counsel, a
+    litigation director, a global-medical-affairs director and a
+    patient-advocacy director, each then verified and scored at cost, for a
+    software engineer. Every one of them scored 0.00 relevance. A zero is not
+    an idiosyncratic title, it is another profession.
+    """
+    board = [Posting(title=t) for t in [
+        "Senior Software Engineer",
+        "Associate VP-Assistant General Patent Counsel IP Procurement",
+        "Senior Director, Counsel - Litigation, Legal Policy",
+        "Senior Director, Global Medical Affairs",
+        "Senior Director, Patient Advocacy"]]
+    kept, dropped = narrow_to_relevant(board, PROFILE, keep=25)
+    assert [p.title for p in kept] == ["Senior Software Engineer"]
+    assert dropped == 4
+
+
+def test_an_idiosyncratic_but_technical_title_still_survives():
+    """What the size check was protecting, with a profile that has the words.
+
+    "Member of Technical Staff" is a real software title and must not be lost
+    to the zero rule; it is not zero against a profile that mentions technical
+    work, which is the case the rule is judged on.
+    """
+    profile = dict(PROFILE, core_skills=PROFILE["core_skills"] + ["technical leadership"])
+    board = [Posting(title=t) for t in
+             ["Member of Technical Staff", "Regional Sales Director"]]
+    kept, dropped = narrow_to_relevant(board, profile, keep=25)
+    assert [p.title for p in kept] == ["Member of Technical Staff"]
+    assert dropped == 1
 
 
 def test_a_research_institute_board_loses_its_animal_technicians():
