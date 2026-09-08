@@ -1,5 +1,7 @@
 # jobscout
 
+[![deploy](https://github.com/deknapp/jobscout/actions/workflows/deploy.yml/badge.svg)](https://github.com/deknapp/jobscout/actions/workflows/deploy.yml)
+
 An agentic job finder that starts from the applications you have **already
 written**, works out who else would want you, reads those employers' own job
 boards, and enforces your location constraint in code rather than in a prompt.
