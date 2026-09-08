@@ -202,8 +202,9 @@ PROBES: Sequence[Tuple[str, Callable]] = (
 )
 
 
-def probe_ats(name: str, get: Getter = _http_get) -> Optional[BoardGuess]:
+def probe_ats(name: str, get: Optional[Getter] = None) -> Optional[BoardGuess]:
     """Try the rented boards. Returns None rather than a guess it cannot stand up."""
+    get = get or _http_get
     checked: List[str] = []
     probes = 0
     for slug in slugs_for(name):
@@ -282,7 +283,7 @@ def _careers_links(html: str, base: str) -> List[str]:
     return found
 
 
-def crawl_careers(homepage: str, get: Getter = _http_get) -> Optional[BoardGuess]:
+def crawl_careers(homepage: str, get: Optional[Getter] = None) -> Optional[BoardGuess]:
     """Follow the employer's own careers link and see where it lands.
 
     One hop, then one more. Employers link 'Careers' from the homepage, and
@@ -291,6 +292,7 @@ def crawl_careers(homepage: str, get: Getter = _http_get) -> Optional[BoardGuess
     """
     if not homepage:
         return None
+    get = get or _http_get
     probes = 0
     status, html = get(homepage)
     probes += 1
@@ -320,8 +322,17 @@ def crawl_careers(homepage: str, get: Getter = _http_get) -> Optional[BoardGuess
     return None
 
 
-def find_board(name: str, homepage: str = "", get: Getter = _http_get) -> Optional[BoardGuess]:
-    """Deterministic board discovery. None means 'ask a model'."""
+def find_board(name: str, homepage: str = "",
+               get: Optional[Getter] = None) -> Optional[BoardGuess]:
+    """Deterministic board discovery. None means 'ask a model'.
+
+    ``get`` is resolved at call time rather than bound as a default argument.
+    A default argument is evaluated once, when the function is defined, so
+    ``get: Getter = _http_get`` would capture the real network client forever
+    and no amount of patching the module afterwards would dislodge it -- which
+    is exactly what happened, and turned the test suite into an HTTP client.
+    """
+    get = get or _http_get
     guess = probe_ats(name, get)
     if guess is not None:
         return guess

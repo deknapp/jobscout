@@ -158,3 +158,43 @@ def test_find_board_falls_back_to_the_site_when_probing_fails():
     get = fake({HOME: (200, '<a href="https://jobs.ashbyhq.com/acme">Careers</a>')})
     guess = find_board("Acme", HOME, get)
     assert guess and guess.ats == "Ashby" and guess.how == "link"
+
+
+# --- the saving is only real if the model is not called ---------------------
+
+def test_resolve_board_does_not_call_the_model_when_probing_worked(monkeypatch):
+    """The whole point. If the free path finds the board and the paid path
+    runs anyway, nothing has been saved."""
+    from jobscout import agents, discover as disc
+    from jobscout.companies import Company
+
+    monkeypatch.setattr(disc, "find_board", lambda name, homepage="", **kw: BoardGuess(
+        url="https://boards.greenhouse.io/acme", ats="Greenhouse", slug="acme",
+        how="named", jobs_seen=7, probes=2))
+
+    class Exploding:
+        def ask_json(self, *a, **k):
+            raise AssertionError("the model must not be asked once probing succeeded")
+
+    out = agents.resolve_board(Exploding(), Company(name="Acme"))
+    assert out["careers_url"] == "https://boards.greenhouse.io/acme"
+    assert out["ats"] == "Greenhouse"
+    assert "without a model call" in out["note"]
+
+
+def test_resolve_board_still_asks_the_model_when_probing_fails(monkeypatch):
+    from jobscout import agents, discover as disc
+    from jobscout.companies import Company
+
+    monkeypatch.setattr(disc, "find_board", lambda name, homepage="", **kw: None)
+    asked = []
+
+    class Recording:
+        def ask_json(self, prompt, **k):
+            asked.append(prompt)
+            return {"careers_url": "https://acme.example/careers",
+                    "ats": "in-house", "note": "found it"}
+
+    out = agents.resolve_board(Recording(), Company(name="Booz Allen"))
+    assert asked, "the paid path is the fallback, not dead code"
+    assert out["ats"] == "in-house"

@@ -20,6 +20,7 @@ import datetime as dt
 import json
 from typing import Any, Dict, List, Optional, Sequence
 
+from . import discover
 from .companies import Company
 from .config import LocationPolicy, Settings
 from .corpus import Corpus, Document
@@ -304,7 +305,24 @@ CANDIDATE PROFILE
 # --- 3. careers-board resolution ------------------------------------------
 
 def resolve_board(llm: LLM, company: Company) -> Dict[str, str]:
-    """Find the one URL where this employer actually lists its open roles."""
+    """Find the one URL where this employer actually lists its open roles.
+
+    Tries to answer without spending anything first. Most employers rent their
+    board from an ATS, and an ATS board can be found by asking the ATS -- one
+    HTTP request against a public API, no model, no web search. Only the
+    employers that resist that get the paid path below, and their answer is
+    cached afterwards like any other.
+    """
+    guess = discover.find_board(company.name, getattr(company, "homepage", "") or "")
+    if guess is not None:
+        return {
+            "careers_url": guess.url,
+            "ats": guess.ats,
+            "note": "found without a model call: %s, %d probe(s)%s"
+                    % (guess.how, guess.probes,
+                       ", %d postings" % guess.jobs_seen if guess.jobs_seen else ""),
+        }
+
     prompt = """Find the OFFICIAL page where "%s" lists its current job openings.
 
 %s
