@@ -594,6 +594,89 @@ Ranking weights are free to change — they operate on scores already stored:
 Runs get cheaper over time: board resolution happens once per employer, and the
 history stops the pipeline from re-verifying anything it has already ruled out.
 
+## Running it as a service on Kubernetes
+
+The CLI answers when you ask. The service asks on a schedule, which is what
+you want from something whose job is to notice a posting before you would
+have.
+
+```console
+make up          # kind cluster, KEDA, image, manifests   (~4 min first time)
+make seed        # copy your existing ~/.jobscout into the volume
+make discover    # queue a run now and watch the pool scale
+make down
+```
+
+The web app is on http://localhost:8765.
+
+### What is distributed, and what deliberately is not
+
+Only one stage can be spread across pods, and it is worth being precise about
+why. **Board discovery** is pure I/O, needs no model, holds no state, and is
+bounded by other people's servers rather than by anything here. So the workers
+scale, mount no volume, and can be killed mid-probe.
+
+Nothing else can. The registry is a directory of JSON files with no locking
+and exactly one writer, so the web app and the two scheduled jobs share a
+single ReadWriteOnce volume, and the workers report what they find through
+Redis rather than writing it. Several pods editing `companies.json` would be a
+data race with nothing to serialise it.
+
+```
+  CronJob queue-discovery ──▶ Redis stream ──▶ workers (0..6, no volume)
+   (reads the registry)            │                 │
+                                   │                 ▼
+                                   │          probe ATS APIs,
+                                   │          shared rate limiter
+                                   ▼                 │
+  CronJob collect-discovery ◀── results stream ◀─────┘
+   (the only writer)
+        │
+        ▼
+   state volume (RWO) ──▶ web app
+```
+
+Redis holds the three things several pods must agree on: the queue, the
+**daily spending ledger**, and the **per-domain rate limiter**. They are the
+same kind of problem — read, decide and write in one atomic step — which is
+why they live in one place and why both the ledger and the limiter are Lua
+scripts rather than a read followed by a write.
+
+### Scaling on the queue, not on CPU
+
+These workers are latency-bound. One waiting on Greenhouse looks idle; one
+waiting on the shared rate limiter looks idle too. Average CPU across the pool
+would sit near zero whether the queue holds nothing or four hundred employers,
+so a CPU-driven autoscaler would never add a pod.
+
+KEDA reads the Redis consumer group instead, with two triggers, because "work
+outstanding" is two numbers and each is blind alone. `lagCount` is work never
+delivered and is the only one that can lift the pool off zero — with no
+consumers nothing is pending, so a pending-only trigger sits at zero forever
+while the queue fills up behind it. `pendingEntriesCount` is work delivered
+and unfinished, which is what an evicted pod leaves behind; without it the
+pool would scale down while employers are still outstanding.
+
+A measured run: **58 employers queued, the pool went 0 → 1 → 5 → 6, all 58
+were processed in about 85 seconds, 11 careers boards were resolved with no
+model calls at all, and the pool returned to 0 a minute later.**
+
+### The honest limits
+
+- **More workers do not mean proportionally more throughput.** The rate
+  limiter is shared and per-domain, and most employers rent their board from
+  the same handful of ATS providers — so the ceiling on Greenhouse is the same
+  whether one pod or six is asking. Parallelism helps because the work is
+  latency-bound and spread across many hosts, not because the limit rises.
+- **The state volume is ReadWriteOnce**, so the web app and both CronJobs must
+  land on the same node. The kind cluster has one worker node, which makes
+  that true by construction. A real cluster would want ReadWriteMany, or the
+  JSON files replaced by a database.
+- **This has only ever run on kind**, on one laptop. There is no cloud
+  deployment and the manifests have never been applied to one.
+- Worker logs go with the pods when the pool scales to zero. Anything you want
+  to keep has to be shipped somewhere first.
+
 ## Layout
 
 | File | What it does |
