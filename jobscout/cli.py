@@ -359,6 +359,78 @@ def cmd_serve(args: argparse.Namespace) -> int:
                  host=getattr(args, 'host', None))
 
 
+# --- the service: queue, workers, collector --------------------------------
+
+def cmd_queue_discovery(args: argparse.Namespace) -> int:
+    """Enqueue the employers whose careers board is still unknown.
+
+    Run on a schedule. Enqueueing is idempotent in the way that matters: an
+    employer already resolved is not in needing_resolution(), and a duplicate
+    task costs one repeat probe, not a wrong answer.
+    """
+    from . import queueing
+
+    settings = load_settings(require_applications=False)
+    registry = Registry(settings.companies_path)
+    pending = registry.needing_resolution()
+    if args.limit:
+        pending = pending[: args.limit]
+    if not pending:
+        print("nothing to look up — every employer has a board or has been ruled out")
+        return 0
+
+    conn = queueing.client(args.redis_url)
+    queueing.ensure_group(conn)
+    added = queueing.submit(conn, [{"name": c.name, "company": c.name} for c in pending])
+    lag, pending_count = queueing.depth(conn)
+    print("queued %d employer(s); queue now %d waiting, %d in flight"
+          % (added, lag, pending_count))
+    return 0
+
+
+def cmd_worker(args: argparse.Namespace) -> int:
+    """Run a discovery worker until it is told to stop."""
+    from . import worker
+
+    return worker.main(args.redis_url)
+
+
+def cmd_collect_discovery(args: argparse.Namespace) -> int:
+    """Merge what the workers found back into the registry.
+
+    Runs where the registry lives, which is the one place that writes it. The
+    workers are stateless on purpose: several of them writing the same JSON
+    file would be a data race with no lock to take.
+    """
+    from . import queueing
+
+    settings = load_settings(require_applications=False)
+    registry = Registry(settings.companies_path)
+
+    conn = queueing.client(args.redis_url)
+    results = queueing.drain_results(conn)
+    resolved = unplaced = unknown = 0
+    for result in results:
+        company = registry.get(result.get("company", ""))
+        if company is None:
+            unknown += 1
+            continue
+        if result.get("found"):
+            registry.mark_resolved(company, result["url"], result.get("ats", ""))
+            resolved += 1
+        else:
+            # Deliberately NOT marked no_board. Probing failing to place an
+            # employer says nothing about whether they have a board -- only
+            # that the mechanical route did not find it. Recording no_board
+            # here would permanently stop the model path from ever trying.
+            unplaced += 1
+    if resolved:
+        registry.save()
+    print("collected %d result(s): %d resolved, %d left for the model, %d unrecognised"
+          % (len(results), resolved, unplaced, unknown))
+    return 0
+
+
 # --- history ---------------------------------------------------------------
 
 def cmd_history(args: argparse.Namespace) -> int:
@@ -1196,6 +1268,27 @@ def build_parser() -> argparse.ArgumentParser:
         "brief", help="one screen: what to do today, and who to talk to next")
     brief.add_argument("--max", type=int, default=6, help="rows per section")
     brief.set_defaults(func=cmd_brief)
+
+    queue_cmd = subparsers.add_parser(
+        "queue-discovery",
+        help="enqueue employers whose careers board is still unknown")
+    queue_cmd.add_argument("--redis-url", default=None,
+                           help="default $JOBSCOUT_REDIS_URL")
+    queue_cmd.add_argument("--limit", type=int, default=0,
+                           help="enqueue at most this many")
+    queue_cmd.set_defaults(func=cmd_queue_discovery)
+
+    worker_cmd = subparsers.add_parser(
+        "worker", help="run a board-discovery worker until stopped")
+    worker_cmd.add_argument("--redis-url", default=None,
+                            help="default $JOBSCOUT_REDIS_URL")
+    worker_cmd.set_defaults(func=cmd_worker)
+
+    collect_cmd = subparsers.add_parser(
+        "collect-discovery", help="merge worker results into the registry")
+    collect_cmd.add_argument("--redis-url", default=None,
+                             help="default $JOBSCOUT_REDIS_URL")
+    collect_cmd.set_defaults(func=cmd_collect_discovery)
 
     return parser
 
