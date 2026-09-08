@@ -20,6 +20,17 @@ def normalize_title(title: str) -> str:
     return re.sub(r"\s+", " ", text).strip().lower()
 
 
+#: Workday puts the role's location in the URL path, so one requisition is
+#: reachable at several addresses:
+#:     .../LLY/job/US-Remote/Associate-Director--Regulatory_R-111185
+#:     .../LLY/job/US-USA-Remote/Associate-Director--Regulatory_R-111185
+#: Both are req R-111185. Keyed on the whole path they are two roles, and a
+#: board that accumulates across runs collects the same job twice, days apart.
+#: The requisition number is the identity Workday itself uses, so use that.
+_WORKDAY_HOST = re.compile(r"(^|\.)myworkdayjobs\.com$")
+_WORKDAY_REQ = re.compile(r"_([A-Za-z]{0,4}[-_]?\d[\w-]*)$")
+
+
 def canonical_url(url: str) -> str:
     """Drop tracking query strings so the same posting is one posting."""
     if not url:
@@ -29,6 +40,13 @@ def canonical_url(url: str) -> str:
     if host.startswith("www."):
         host = host[4:]
     path = (parts.path or "").rstrip("/")
+    if _WORKDAY_HOST.search(host) and "/job/" in path:
+        segments = [seg for seg in path.split("/") if seg]
+        req = _WORKDAY_REQ.search(segments[-1]) if segments else None
+        if req:
+            # host/<site>/job/<req>, dropping the location and title slugs.
+            site = segments[0] if segments[0] != "job" else ""
+            return "%s/%s/job/%s" % (host, site, req.group(1))
     return "%s%s" % (host, path)
 
 

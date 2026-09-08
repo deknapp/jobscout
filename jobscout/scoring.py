@@ -17,6 +17,17 @@ Recency decays exponentially rather than linearly, because that is how a
 requisition actually ages: fast at first, then it barely matters whether it has
 been open 40 days or 60.
 
+Recency is applied as a **multiplier**, not as a third addend. It was an addend
+once, and that was wrong in a way that took a real board to see: with a 25%
+weight, freshness alone was worth up to 25 points, which is wider than the gap
+between a good match and a bad one. A regulatory-affairs directorship scored
+fit 10 and likelihood 4 for a software engineer, was posted that morning, and
+came out in the 59th percentile — above the median of everything ever scored —
+because it was new. Nothing is worth your afternoon *because* it is fresh. A
+posting you have no chance at is not a better bet today than it was yesterday;
+freshness only decides between roles that are already worth considering, which
+is exactly what a multiplier does and an addend does not.
+
 The composite is then reported as a **percentile** against every role jobscout
 has ever scored for you. "88th percentile" answers the question you are actually
 asking — *is this better than what usually crosses my desk?* — which a bare
@@ -40,6 +51,10 @@ UNDATED_RECENCY = 50.0
 
 @dataclass
 class Weights:
+    #: fit and likelihood are blended against each other to give the role's
+    #: merit. recency is not a third share of the score: it is how much of that
+    #: merit staleness is allowed to erode, so 0.25 means an ancient posting
+    #: keeps 75% of its merit and a posting made today keeps all of it.
     fit: float = 0.45
     likelihood: float = 0.30
     recency: float = 0.25
@@ -75,10 +90,19 @@ def composite(posting: Posting, weights: Weights,
     recency = recency_score(
         posting.age_days() if age_days is None else age_days, weights.halflife_days)
     posting.recency_score = int(round(recency))
-    score = (norm.fit * posting.fit_score
-             + norm.likelihood * posting.likelihood
-             + norm.recency * recency)
-    return round(score, 2)
+
+    # Merit first: what the role is worth on its own terms, with fit and
+    # likelihood weighed against each other rather than against the calendar.
+    merit_total = norm.fit + norm.likelihood
+    if merit_total <= 0:
+        return 0.0
+    merit = (norm.fit * posting.fit_score
+             + norm.likelihood * posting.likelihood) / merit_total
+
+    # Then let staleness take a bite out of it, never more than norm.recency
+    # of the whole. Fresh keeps everything; ancient keeps the rest.
+    freshness = (1.0 - norm.recency) + norm.recency * (recency / 100.0)
+    return round(merit * freshness, 2)
 
 
 def percentile_of(value: float, baseline: Sequence[float]) -> Optional[int]:

@@ -52,6 +52,38 @@ def test_a_fresh_posting_beats_an_identical_stale_one():
     assert ranked[0] is fresh
 
 
+def test_freshness_cannot_rescue_a_role_you_have_no_chance_at():
+    """The bug that made a real board unreadable.
+
+    Recency used to be a third addend worth up to 25 points, which is wider
+    than the gap between a good match and a bad one. A regulatory-affairs
+    directorship (fit 10, likelihood 4) posted that morning came out ABOVE a
+    computational-chemistry role (fit 35, likelihood 11) posted three weeks
+    earlier, and landed in the 59th percentile of everything ever scored.
+    """
+    weights = Weights()
+    fresh_junk = Posting(company="Pharma Co", title="Associate Director, Regulatory",
+                         posted=TODAY.isoformat(), fit_score=10, likelihood=4)
+    stale_match = Posting(company="Biotech", title="Research Scientist, Comp Chem",
+                          posted=(TODAY - dt.timedelta(days=24)).isoformat(),
+                          fit_score=35, likelihood=11)
+    ranked = score_all([fresh_junk, stale_match], weights, today=TODAY)
+    assert ranked[0] is stale_match
+
+
+def test_staleness_can_only_take_the_recency_weight_off_a_score():
+    """Recency multiplies merit; it never adds to it."""
+    weights = Weights(fit=0.45, likelihood=0.30, recency=0.25, halflife_days=14)
+    fresh = Posting(company="A", title="Engineer", fit_score=80, likelihood=60,
+                    posted=TODAY.isoformat())
+    ancient = Posting(company="B", title="Engineer", fit_score=80, likelihood=60,
+                      posted=(TODAY - dt.timedelta(days=3650)).isoformat())
+    score_all([fresh, ancient], weights, today=TODAY)
+    # merit = 0.6*80 + 0.4*60 = 72, and nothing scores above its own merit.
+    assert abs(fresh.composite - 72.0) < 0.01
+    assert abs(ancient.composite - 72.0 * 0.75) < 0.5
+
+
 def test_percentile_needs_enough_history_to_mean_anything():
     assert percentile_of(50, [1, 2, 3]) is None
     baseline = list(range(MIN_PERCENTILE_SAMPLES + 2))

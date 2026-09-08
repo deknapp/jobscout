@@ -127,3 +127,33 @@ def test_only_your_own_decisions_hide_a_job():
     assert not reloaded.seen_before(unchecked)[0]  # our failure, not the job's
     assert reloaded.seen_before(applied)[0]        # you applied
     assert reloaded.seen_before(dismissed)[0]      # you said no
+
+
+# --- one requisition must be one posting ------------------------------------
+
+def test_workday_locations_are_not_two_different_jobs():
+    """Workday puts the location in the path, so one req has several URLs.
+
+    A real board collected Eli Lilly's req R-111185 twice, three days apart,
+    once under US-Remote and once under US-USA-Remote. The pipeline's dedupe
+    never saw them together because they arrived in different runs, and the
+    board keys on the URL.
+    """
+    from jobscout.models import canonical_url
+    base = "https://lilly.wd115.myworkdayjobs.com/LLY/job"
+    one = "%s/US-Remote/Associate-Director--Regulatory-Starting-Material_R-111185" % base
+    two = "%s/US-USA-Remote/Associate-Director--Regulatory-Starting-Material_R-111185" % base
+    assert canonical_url(one) == canonical_url(two)
+
+
+def test_two_workday_requisitions_stay_two_jobs():
+    from jobscout.models import canonical_url
+    base = "https://lilly.wd115.myworkdayjobs.com/LLY/job/US-Remote"
+    assert canonical_url("%s/Senior-Director--Global-Medical-Affairs_R-111184" % base) \
+        != canonical_url("%s/Associate-Director--Regulatory_R-111185" % base)
+
+
+def test_non_workday_urls_are_untouched_by_the_workday_rule():
+    from jobscout.models import canonical_url
+    assert canonical_url("https://jobs.ashbyhq.com/iambic/50be2fab_R-1") \
+        == "jobs.ashbyhq.com/iambic/50be2fab_R-1"
