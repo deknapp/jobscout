@@ -1,0 +1,16 @@
+# No ingress controller on a laptop: the kind config maps host port 8765 to
+# this NodePort, so http://localhost:8765 reaches the web app.
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-nodeport
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: jobscout
+    app.kubernetes.io/component: web
+  ports:
+    - name: http
+      port: 8765
+      targetPort: http
+      nodePort: 30876

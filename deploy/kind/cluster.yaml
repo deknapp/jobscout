@@ -1,0 +1,17 @@
+# A two-node cluster on one laptop.
+#
+# The state volume is ReadWriteOnce, and the pods that mount it -- the web app
+# and the two scheduled jobs -- must therefore land on the same node. One
+# worker node makes that true by construction rather than by a node selector
+# that would be wrong on any real cluster. The discovery workers mount nothing
+# and can go anywhere; they are the part that scales.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: jobscout
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30876   # the web app, at localhost:8765
+        hostPort: 8765
+        protocol: TCP
+  - role: worker

@@ -1,0 +1,70 @@
+# The part that scales.
+#
+# A discovery worker holds no volume and no state. It takes an employer off
+# the queue, probes for their careers board, publishes what it found and
+# acknowledges. That is why it can be scaled to zero, killed at any moment,
+# and run several at a time -- and why nothing else here can.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  # KEDA owns this. A number here would be overwritten on the next poll.
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jobscout
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jobscout
+        app.kubernetes.io/component: worker
+    spec:
+      automountServiceAccountToken: false
+      # Long enough to finish the probe in hand, which the rate limiter bounds
+      # to a few seconds. There is nothing to gain by abandoning it: the task
+      # is unacknowledged either way, so abandoning only means another worker
+      # repeats the same requests against the same board.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: jobscout:dev
+          imagePullPolicy: IfNotPresent
+          args: ["worker"]
+          envFrom:
+            - configMapRef: { name: jobscout-config }
+          ports:
+            - name: health
+              containerPort: 9000
+          resources:
+            # This work is latency-bound, not CPU-bound: a worker spends most
+            # of its life waiting for someone else's server, or waiting for
+            # the shared rate limiter. Requesting a core would price the pool
+            # out of a laptop for no throughput.
+            requests: { cpu: 50m, memory: 96Mi }
+            limits:   { memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /readyz, port: health }
+            periodSeconds: 5
+          # Liveness deliberately does not check Redis. Redis being down is
+          # not a reason to restart every worker; wiring it that way turns one
+          # outage into a pool-wide crash loop that makes recovery slower.
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: {}

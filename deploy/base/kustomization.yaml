@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: jobscout
+
+# includeSelectors is off: every workload declares its own selector, and
+# letting kustomize inject labels into selectors makes them immutable in
+# practice -- changing a common label later means deleting and recreating
+# every Deployment rather than updating it.
+labels:
+  - pairs:
+      app.kubernetes.io/name: jobscout
+      app.kubernetes.io/part-of: jobscout
+    includeSelectors: false
+    includeTemplates: true
+
+resources:
+  - namespace.yaml
+  - config.yaml
+  - state.yaml
+  - redis.yaml
+  - web.yaml
+  - worker.yaml
+  - scaledobject.yaml
+  - cronjobs.yaml
+  - networkpolicy.yaml

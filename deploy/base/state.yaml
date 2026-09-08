@@ -1,0 +1,17 @@
+# Everything jobscout knows: the employer registry, the history of what you
+# have already dismissed, your profile, past reports.
+#
+# ReadWriteOnce, because it is a directory of JSON files with no locking and
+# exactly one writer. That constraint is why the discovery workers hold no
+# volume at all and report their findings through Redis instead -- several
+# pods writing companies.json would be a data race with nothing to serialise
+# it. Only the collector writes.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jobscout-state
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi

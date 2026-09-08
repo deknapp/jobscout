@@ -1,0 +1,63 @@
+# Scale on the queue, not on CPU.
+#
+# CPU is the wrong signal here and it is worth being explicit about why. These
+# workers are latency-bound: one that is waiting on Greenhouse looks idle, and
+# one that is waiting on the shared rate limiter looks idle too. Average CPU
+# across the pool would sit near zero whether the queue holds nothing or four
+# hundred employers, so a CPU-driven autoscaler would never add a pod.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker
+spec:
+  scaleTargetRef:
+    name: worker
+  # Scale to zero between runs. Discovery is scheduled work: for most of the
+  # day there is nothing in the queue and no reason for a pod to exist.
+  minReplicaCount: 0
+  maxReplicaCount: 6
+  pollingInterval: 10
+  cooldownPeriod: 120
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Pods
+              value: 4
+              periodSeconds: 30
+        scaleDown:
+          # Slow to give up. A scheduled run arrives as one burst, and tearing
+          # the pool down between employers costs more in cold starts than the
+          # idle pods cost in anything.
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 60
+  # Two triggers, because "work outstanding" is two numbers in Redis and each
+  # is blind alone. lagCount is work never delivered, and is the only one that
+  # can lift the pool off zero -- with no consumers nothing is pending, so a
+  # pending-only trigger sits at zero forever while the queue fills up behind
+  # it. pendingEntriesCount is work delivered and unfinished, which is what an
+  # evicted pod leaves behind; without it the pool would scale down while
+  # employers are still outstanding. The HPA takes the larger.
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: redis.jobscout.svc.cluster.local:6379
+        stream: "jobscout:discovery"
+        consumerGroup: workers
+        lagCount: "5"
+        activationLagCount: "1"
+    - type: redis-streams
+      metadata:
+        # Fully qualified: the scaler dials from KEDA's own namespace, where a
+        # bare "redis" resolves to nothing at all. The failure is silent in
+        # the place you look first -- pods stay at zero, the queue keeps
+        # filling, and the reason is only in the KEDA operator's log.
+        address: redis.jobscout.svc.cluster.local:6379
+        stream: "jobscout:discovery"
+        consumerGroup: workers
+        pendingEntriesCount: "5"

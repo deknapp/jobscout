@@ -1,0 +1,94 @@
+# The two ends of a scheduled discovery run. Between them, the workers.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: queue-discovery
+spec:
+  # Twice a day. Board discovery is a backlog that shrinks: an employer is
+  # looked up once and the answer is cached forever, so this exists to pick up
+  # newly proposed employers, not to re-ask the same question.
+  schedule: "0 7,19 * * *"
+  timeZone: "America/Denver"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: queue
+              image: jobscout:dev
+              imagePullPolicy: IfNotPresent
+              args: ["queue-discovery"]
+              envFrom:
+                - configMapRef: { name: jobscout-config }
+              resources:
+                requests: { cpu: 50m, memory: 96Mi }
+                limits:   { memory: 256Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              volumeMounts:
+                - { name: state, mountPath: /data }
+          volumes:
+            - name: state
+              persistentVolumeClaim:
+                claimName: jobscout-state
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: collect-discovery
+spec:
+  # Every ten minutes, and deliberately not "once, after the workers finish".
+  # There is no moment when they are finished -- the pool scales to zero when
+  # the queue empties, and a pod evicted mid-probe puts its employer back.
+  # Draining a results stream on a timer needs no such moment to exist.
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+            seccompProfile: { type: RuntimeDefault }
+          containers:
+            - name: collect
+              image: jobscout:dev
+              imagePullPolicy: IfNotPresent
+              args: ["collect-discovery"]
+              envFrom:
+                - configMapRef: { name: jobscout-config }
+              resources:
+                requests: { cpu: 50m, memory: 96Mi }
+                limits:   { memory: 256Mi }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
+              volumeMounts:
+                - { name: state, mountPath: /data }
+          volumes:
+            - name: state
+              persistentVolumeClaim:
+                claimName: jobscout-state

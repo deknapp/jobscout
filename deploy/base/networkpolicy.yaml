@@ -1,0 +1,106 @@
+# Default deny, then say what is allowed.
+#
+# One rule here is unusual and is the point of the whole system: the discovery
+# workers need egress to the open internet, because probing other people's ATS
+# APIs is their entire job. Everything else is closed.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: redis
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: jobscout
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # KEDA reads the stream depth to size the pool, so the autoscaler is a
+    # legitimate client of the queue and has to be named. Default-deny means
+    # every new client is a manifest change, which is the point.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keda
+      ports:
+        - { protocol: TCP, port: 6379 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jobscout
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: redis
+      ports:
+        - { protocol: TCP, port: 6379 }
+    # The open internet, minus the cluster's own address space. Workers probe
+    # careers boards and the model stages call the Claude API; both are out
+    # there. Excluding private ranges means a bug in a URL cannot turn a
+    # worker into a scanner of the cluster it runs on.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-ingress
+spec:
+  # The web app is reached from outside the cluster, which no selector can
+  # express -- a NodePort connection arrives from the node, not from a pod.
+  # It needs an ipBlock, and getting this wrong is quiet: every pod healthy,
+  # every probe green, and curl hanging.
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: web
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 0.0.0.0/0 }
+      ports:
+        - { protocol: TCP, port: 8765 }

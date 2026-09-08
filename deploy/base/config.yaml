@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jobscout-config
+data:
+  JOBSCOUT_REDIS_URL: "redis://redis:6379/0"
+  JOBSCOUT_DATA_DIR: "/data"
+  JOBSCOUT_HOST: "0.0.0.0"
+  JOBSCOUT_LOG: "INFO"
+  # The cap that makes an unattended schedule safe to leave running. Enforced
+  # in code, shared across pods through Redis, and the reason the budget store
+  # was written against a Protocol rather than a file.
+  JOBSCOUT_DAILY_BUDGET_USD: "2.00"
+  # Deliberately gentle. Discovery replaced paid model calls with requests to
+  # other people's ATS APIs, and the failure mode of getting this wrong is
+  # being blocked -- which breaks the feature for everyone running jobscout.
+  JOBSCOUT_MAX_WEB_SEARCHES: "3"
+  JOBSCOUT_MAX_WEB_FETCHES: "3"
+  JOBSCOUT_MAX_FETCH_TOKENS: "6000"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jobscout-secrets
+type: Opaque
+stringData:
+  # Replaced by `make secret`, which reads your own key from the environment
+  # and never writes it to a file. An empty key means the model stages fail
+  # and the free ones -- board discovery, board reading over ATS APIs -- carry
+  # on working, which is a reasonable state for a first run.
+  ANTHROPIC_API_KEY: ""

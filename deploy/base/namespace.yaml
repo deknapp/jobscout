@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jobscout
+  labels:
+    app.kubernetes.io/name: jobscout
+    # Everything here runs unprivileged, as a non-root user, with no
+    # capabilities. Enforcing it at the namespace means a later manifest
+    # cannot quietly opt out.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

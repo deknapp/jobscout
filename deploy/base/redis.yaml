@@ -1,0 +1,75 @@
+# The queue, the shared spending ledger, and the per-domain rate limiter.
+#
+# All three are the same kind of thing: state that several pods have to agree
+# on, where the agreement has to happen in one atomic step. That is why they
+# all live here rather than in three different places.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector:
+    app.kubernetes.io/name: jobscout
+    app.kubernetes.io/component: redis
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jobscout
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jobscout
+        app.kubernetes.io/component: redis
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # Append-only, flushed every second. Losing a second of queue costs
+          # a repeated probe, which the registry makes harmless. Losing the
+          # spending ledger would reset the day's cap, which is not harmless.
+          args: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec",
+                 "--save", ""]
+          ports:
+            - name: redis
+              containerPort: 6379
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { memory: 256Mi }
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 6379 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
