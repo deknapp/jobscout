@@ -355,7 +355,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
     from .web import serve
 
     settings = load_settings(require_applications=False)
-    return serve(settings, port=args.port, open_browser=not args.no_browser)
+    return serve(settings, port=args.port, open_browser=not args.no_browser,
+                 host=getattr(args, 'host', None))
 
 
 # --- history ---------------------------------------------------------------
@@ -1088,6 +1089,10 @@ def build_parser() -> argparse.ArgumentParser:
         "serve", help="open the local web app (no setup needed — configure it there)")
     serve.add_argument("--port", type=int, help="port to listen on (default 8765)")
     serve.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    serve.add_argument("--host", default=None,
+                       help="address to bind (default 127.0.0.1; a container sets "
+                            "JOBSCOUT_HOST=0.0.0.0). This app has no login — binding "
+                            "it beyond localhost exposes your job search to the network.")
     serve.set_defaults(func=cmd_serve)
 
     history = subparsers.add_parser("history", help="what has already been recommended")

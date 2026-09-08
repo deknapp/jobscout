@@ -537,12 +537,22 @@ def make_handler(app: App):
 
 
 def serve(settings: Settings, port: Optional[int] = None,
-          open_browser: bool = True) -> int:
+          open_browser: bool = True, host: Optional[str] = None) -> int:
+    """Serve the web app.
+
+    Binds to localhost unless told otherwise. That default is deliberate: this
+    app shows your résumé, your correspondence and who you are chasing, and it
+    has no authentication because it was written to be reachable only from the
+    machine it runs on. Binding it to every interface is a decision, not a
+    convenience, so it takes an explicit --host (a container sets
+    JOBSCOUT_HOST=0.0.0.0, where the pod's network namespace is the boundary).
+    """
     load_saved_weights(settings)
     app = App(settings)
     port = port or settings.port
-    server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))
-    url = "http://127.0.0.1:%d/" % port
+    host = host or os.environ.get("JOBSCOUT_HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, port), make_handler(app))
+    url = "http://%s:%d/" % ("127.0.0.1" if host == "0.0.0.0" else host, port)
     print("jobscout is running at %s" % url)
     print("press Ctrl+C to stop")
     if open_browser:

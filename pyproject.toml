@@ -17,6 +17,9 @@ dependencies = [
 [project.optional-dependencies]
 api = ["anthropic>=0.40"]
 dev = ["pytest>=7"]
+# Everything the containerised service needs beyond the CLI: a queue, a shared
+# spending ledger, and a rate limiter that several pods can agree on.
+service = ["redis>=5.0"]
 
 [project.scripts]
 jobscout = "jobscout.cli:main"

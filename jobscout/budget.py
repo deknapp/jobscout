@@ -204,9 +204,17 @@ class Budget:
 
     @classmethod
     def from_settings(cls, settings) -> "Budget":
+        """Pick a store from the environment.
+
+        A file when one process is spending, Redis when several are. The rule
+        being enforced is identical; only the place it is enforced moves.
+        """
         cap = float(getattr(settings, "daily_budget_usd", 0.0) or 0.0)
         if cap <= 0:
             return cls(cap_usd=0.0, store=NullSpendStore())
+        url = os.environ.get("JOBSCOUT_REDIS_URL", "")
+        if url:
+            return cls(cap_usd=cap, store=RedisSpendStore.from_url(url))
         return cls(cap_usd=cap, store=FileSpendStore(Path(settings.data_dir) / "spend.json"))
 
     @property
@@ -277,3 +285,87 @@ class Budget:
             return "no daily budget set"
         return "$%.4f of $%.2f spent today ($%.2f left)" % (
             self.spent_today(), self.cap_usd, self.remaining())
+
+
+class RedisSpendStore:
+    """The same ledger, shared by every pod.
+
+    ``FileSpendStore`` is correct for one machine and useless for several: two
+    workers on different nodes would each hold their own file and each believe
+    the whole day's budget was theirs. The rule has to be enforced somewhere
+    both of them can see.
+
+    ``reserve`` is a Lua script rather than a read followed by a write, for
+    exactly the reason the file store needs a lock. Redis runs a script
+    atomically, so no two callers can both observe the same remaining budget
+    and both claim it -- which is the bug that let a four-thread run spend
+    $10.33 against a $10 cap.
+    """
+
+    #: Read the total, refuse if this claim would exceed the cap, otherwise
+    #: claim it. One step, no window in between.
+    _RESERVE = """
+    local spent = tonumber(redis.call('GET', KEYS[1]) or '0')
+    local amount = tonumber(ARGV[1])
+    local cap = tonumber(ARGV[2])
+    if spent + amount > cap then
+      return 0
+    end
+    redis.call('INCRBYFLOAT', KEYS[1], ARGV[1])
+    redis.call('EXPIRE', KEYS[1], ARGV[3])
+    return 1
+    """
+
+    #: Settling can hand money back, and must not drive the total negative --
+    #: a release of an unspent reservation on a fresh key would otherwise
+    #: leave a credit that quietly raises tomorrow's cap.
+    _ADJUST = """
+    local total = tonumber(redis.call('INCRBYFLOAT', KEYS[1], ARGV[1]))
+    if total < 0 then
+      redis.call('SET', KEYS[1], '0')
+      total = 0
+    end
+    redis.call('EXPIRE', KEYS[1], ARGV[2])
+    return tostring(total)
+    """
+
+    #: Long enough to answer "what did last week cost", short enough that the
+    #: keys do not accumulate forever.
+    TTL_SECONDS = 90 * 24 * 3600
+
+    def __init__(self, client, prefix: str = "jobscout:spend") -> None:
+        self.client = client
+        self.prefix = prefix
+        self._reserve = client.register_script(self._RESERVE)
+        self._adjust = client.register_script(self._ADJUST)
+
+    def _key(self, day: str) -> str:
+        return "%s:%s" % (self.prefix, day)
+
+    @classmethod
+    def from_url(cls, url: str, prefix: str = "jobscout:spend") -> "RedisSpendStore":
+        import redis  # imported lazily: the CLI does not need it
+
+        return cls(redis.Redis.from_url(url, decode_responses=True), prefix)
+
+    def spent_on(self, day: str) -> float:
+        return float(self.client.get(self._key(day)) or 0.0)
+
+    def reserve(self, day: str, amount: float, cap: float) -> bool:
+        return bool(self._reserve(keys=[self._key(day)],
+                                  args=[repr(float(amount)), repr(float(cap)),
+                                        self.TTL_SECONDS]))
+
+    def adjust(self, day: str, delta: float) -> float:
+        return float(self._adjust(keys=[self._key(day)],
+                                  args=[repr(float(delta)), self.TTL_SECONDS]))
+
+    def add(self, day: str, amount: float) -> float:
+        return self.adjust(day, amount)
+
+    def history(self) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for key in self.client.scan_iter("%s:*" % self.prefix):
+            day = key.rsplit(":", 1)[-1]
+            out[day] = float(self.client.get(key) or 0.0)
+        return dict(sorted(out.items()))
