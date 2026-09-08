@@ -127,6 +127,38 @@ still has more than 25 in-area roles — a crude title-overlap trim. Below that
 cap nothing is trimmed, because an unusual title is exactly what token overlap
 throws away by mistake.
 
+### Finding the board in the first place
+
+Reading a board free is only half of it — something has to know the board's
+address. That used to be a model call with web search and web fetch, run once
+per new employer.
+
+It is mostly a mechanical question. Employers do not host careers boards, they
+rent them, and rented boards live at predictable addresses. So jobscout probes
+before it asks:
+
+1. **Ask the ATS.** Slugs are derived from the name — `Descartes Labs` becomes
+   `descarteslabs`, `descartes-labs`, `descartes` — and each is tried against
+   the public APIs above. A 200 with real postings is not a guess, it is the
+   board.
+2. **Read their own site.** Homepages link to a careers page, and that page
+   nearly always links to the ATS behind it. Two fetches, no model.
+3. **Ask a model**, for the ones that resist both. Rare, and cached forever
+   afterwards, because a careers board does not move.
+
+Against a registry with thirty unresolved employers, probing alone found nine
+of them — no model calls, no web searches.
+
+**A wrong answer here is worse than none**, because it is cached and then
+quietly serves another company's jobs forever. An employer recorded as
+`General` matched a Greenhouse board on its first probe; that board is called
+*General Interest* and belongs to nobody. Greenhouse publishes each board's own
+name, so ownership is confirmed rather than inferred — on every hit, including
+slugs that look specific, since a one-word company name looks specific and is
+the least safe case there is. The systems that publish no name get the stricter
+rule instead: the slug has to carry the whole name, because a truncation that
+finds a board is exactly the answer that gets cached.
+
 ## The search you are already running
 
 Three commands read what you already have. None of them scrapes anything: they
@@ -521,12 +553,30 @@ jobscout alias "Acme" --same-as acmecorp   # one employer, two domains
 
 ## Cost
 
+### A ceiling that refuses
+
+`JOBSCOUT_DAILY_BUDGET_USD` is a hard cap on what jobscout may spend on model
+calls in a day. It is checked below the agents, at the one seam every call
+passes through, and it refuses rather than warns.
+
+It is off by default, because the CLI has you watching it and a surprise
+refusal would be worse than a surprise dollar. **Set one before anything runs
+unattended.** `jobscout status` shows what is left.
+
+A cap cannot be exact — a call's cost is only known after the API reports its
+token counts, so a check that waited for the true number would always be one
+call too late. A conservative reservation is claimed before each request and
+reconciled with the real figure after, so spending stops at or below the cap
+at the price of occasionally refusing a call that would have fit.
+
+### The per-run caps
+
 Every model call is capped per run, and the caps are the dial between a cheap
 run and a thorough one:
 
 | Setting | Default | What it costs |
 |---|---:|---|
-| `JOBSCOUT_MAX_RESOLVE_PER_RUN` | 20 | one cheap web-search call per new employer, once ever |
+| `JOBSCOUT_MAX_RESOLVE_PER_RUN` | 20 | usually free — see *Finding the board*; a model call only for employers probing cannot place |
 | `JOBSCOUT_MAX_SCANS_PER_RUN` | 8 | **agent scans only** — boards with an API are read every run, uncapped |
 | `JOBSCOUT_MAX_VERIFY_PER_RUN` | 20 | one cheap fetch per surviving posting |
 | `JOBSCOUT_COMPANY_TARGET` | 80 | one strong call when the registry is short |

@@ -15,6 +15,7 @@ recommendation nor pays to re-check the rejection.
 """
 from __future__ import annotations
 
+
 import datetime as dt
 import json
 import sys
@@ -618,7 +619,41 @@ def verify(settings: Settings, llm: LLM, postings: Sequence[Posting],
 
 # --- the whole run ---------------------------------------------------------
 
+def _report_usage(llm) -> None:
+    """Write the cost summary and per-stage breakdown to stderr, once.
+
+    Called from find()'s finally, so it runs whether the pipeline finished or
+    was cut short.
+    """
+    if getattr(llm, "_usage_reported", False) or not llm.usage.calls:
+        return
+    llm._usage_reported = True
+    sys.stderr.write("\n%s\n" % llm.usage.summary())
+    breakdown = llm.usage.breakdown()
+    if breakdown:
+        sys.stderr.write("%s\n" % breakdown)
+
+
 def find(settings: Settings, *, refresh_profile: bool = False,
+         expand: bool = False, today: Optional[dt.date] = None,
+         on_update: Optional[Callable[[List[Posting]], None]] = None) -> RunResult:
+    """Run the pipeline, and report what it cost however it ends.
+
+    The reporting is in a finally rather than at the end of the run, because
+    the run that gets stopped -- by the budget, by Ctrl-C, by an error part
+    way through -- is the run whose cost you most need to see. Those used to
+    report nothing at all: the exception went straight past the summary and
+    the only thing you learned was that the money had gone.
+    """
+    llm = LLM.from_settings(settings)
+    try:
+        return _run(settings, llm, refresh_profile=refresh_profile, expand=expand,
+                    today=today, on_update=on_update)
+    finally:
+        _report_usage(llm)
+
+
+def _run(settings: Settings, llm: LLM, *, refresh_profile: bool = False,
          expand: bool = False, today: Optional[dt.date] = None,
          on_update: Optional[Callable[[List[Posting]], None]] = None) -> RunResult:
     """Run the pipeline.
@@ -631,7 +666,6 @@ def find(settings: Settings, *, refresh_profile: bool = False,
     today = today or dt.date.today()
     result = RunResult()
 
-    llm = LLM.from_settings(settings)
     corpus = load_corpus(settings.applications_dir)
     profile = load_or_build_profile(settings, llm, corpus, refresh=refresh_profile)
     result.profile = profile

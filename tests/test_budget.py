@@ -193,3 +193,29 @@ def test_settling_hands_back_the_unused_reservation(tmp_path):
     with budget.call() as billed:
         billed.cost = 0.02
     assert budget.spent_today() == pytest.approx(0.02)
+
+
+def test_a_run_stopped_by_the_budget_still_reports_what_it_spent(monkeypatch, capsys):
+    """The run that gets stopped is the run whose cost you most need to see,
+    and it was the only one that reported nothing: the exception went straight
+    past the summary at the end of the pipeline."""
+    from jobscout import pipeline
+
+    def explode(settings, llm, **kw):
+        llm.usage.add(Response(text="{}", cost_usd=2.5), "resolve_board")
+        raise BudgetExceeded(10.0, 10.0, 1.0)
+
+    monkeypatch.setattr(pipeline, "_run", explode)
+    monkeypatch.setattr(pipeline.LLM, "from_settings",
+                        classmethod(lambda cls, s: LLM(_CostingBackend(0.0),
+                                                       model_cheap="c", model_strong="s")))
+
+    class Settings:
+        pass
+
+    with pytest.raises(BudgetExceeded):
+        pipeline.find(Settings())
+
+    err = capsys.readouterr().err
+    assert "model call(s)" in err
+    assert "resolve_board" in err, "the breakdown has to name the stage that spent it"
