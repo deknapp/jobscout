@@ -65,7 +65,15 @@ class Posting:
     source: str = ""
     posted: str = ""
     salary: str = ""
+    #: A short display string for the board and the report.
     summary: str = ""
+    #: The posting's full text, untruncated, which is what the scorer reads.
+    #: These are two different jobs. A 600-character summary is the right size
+    #: for a list you skim; it is the wrong size for deciding whether a role
+    #: matches you, because employers open with several paragraphs about
+    #: themselves and the requirements arrive well after that. Scoring the
+    #: summary means scoring the company blurb.
+    description: str = ""
     #: How far through the pipeline this posting has got. The web app shows
     #: roles the moment they are FOUND, then fills in the rest as it arrives,
     #: so a long run is readable from the first employer rather than the last.

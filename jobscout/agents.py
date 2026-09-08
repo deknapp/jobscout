@@ -506,7 +506,12 @@ Meaning of each status:
 #: truncated at 20k characters, which quietly dropped everything past the cut —
 #: and a JSON array sliced mid-object often failed to parse at all, losing the
 #: scores for the whole run.
-RANK_BATCH = 20
+#:
+#: Eight rather than twenty because each posting now carries its whole
+#: description instead of a 600-character blurb. Twenty full job descriptions
+#: in one prompt is both a large request and an invitation to skim; the
+#: batches run concurrently anyway, so smaller ones cost wall-clock nothing.
+RANK_BATCH = 8
 
 
 def rank_postings(llm: LLM, postings: Sequence[Posting],
@@ -533,9 +538,14 @@ def rank_postings(llm: LLM, postings: Sequence[Posting],
 
 def _rank_batch(llm: LLM, postings: Sequence[Posting],
                 profile: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    # The full description, not the summary. The summary is the first 600
+    # characters of the posting, and employers spend those on themselves —
+    # scoring it means scoring the company blurb and the job title, which is
+    # how a .NET requisition scores 88 against a Python candidate.
     listing = [
         {"id": p.id, "company": p.company, "title": p.title, "location": p.location,
-         "posted": p.posted, "salary": p.salary, "summary": p.summary}
+         "posted": p.posted, "salary": p.salary,
+         "description": p.description or p.summary}
         for p in postings
     ]
     prompt = """Score each of these verified, in-location job postings against the candidate.
@@ -566,6 +576,12 @@ Also return:
   resembles   which of their past applications this most resembles, or "" if none.
   concerns    the strongest honest reason NOT to apply, or "" if there is none.
   angle       the one thing they should lead with in the application.
+
+Each posting's "description" is the listing's own full text. Score against what
+it actually asks for, not against the job title — titles and bodies do not always
+agree, and when they disagree the body is the job. If the description is missing
+or says nothing about the work, say so in `concerns` and score the fit low rather
+than inferring a stack from the title.
 
 Return ONLY a JSON array of objects with keys:
   ["id", "fit_score", "likelihood", "rationale", "odds", "resembles", "concerns", "angle"]

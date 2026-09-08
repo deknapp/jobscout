@@ -45,6 +45,10 @@ USER_AGENT = "jobscout/0.1 (+https://github.com/deknapp/jobscout)"
 TIMEOUT = 25
 SUMMARY_CHARS = 600
 
+#: The cap on the full description handed to the scorer. Not a display limit —
+#: it is here so one pathological page cannot put a megabyte in a prompt.
+DESCRIPTION_CHARS = 20000
+
 _TAGS = re.compile(r"<[^>]+>")
 _SPACE = re.compile(r"\s+")
 
@@ -112,6 +116,11 @@ def _plain(text: Optional[str], limit: int = SUMMARY_CHARS) -> str:
     return stripped[:limit].rstrip()
 
 
+def _full(text):
+    """The same cleanup as _plain, without the summary-sized truncation."""
+    return _plain(text, limit=DESCRIPTION_CHARS)
+
+
 def _iso_date(value: Any) -> str:
     """Normalise the several date shapes these APIs use to YYYY-MM-DD."""
     if value in (None, "", 0):
@@ -162,6 +171,7 @@ def fetch_greenhouse(company: str, url: str, context: Dict[str, Any]) -> FetchRe
             source="Greenhouse",
             posted=_iso_date(job.get("first_published") or job.get("updated_at")),
             summary=_plain(job.get("content")),
+            description=_full(job.get("content")),
         ))
     return FetchResult(postings=postings, ats="Greenhouse",
                        note="%d role(s) on the Greenhouse board" % len(postings))
@@ -187,6 +197,7 @@ def fetch_lever(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
             source="Lever",
             posted=_iso_date(job.get("createdAt")),
             summary=_plain(job.get("descriptionPlain") or job.get("description")),
+            description=_full(job.get("descriptionPlain") or job.get("description")),
         ))
     return FetchResult(postings=postings, ats="Lever",
                        note="%d role(s) on the Lever board" % len(postings))
@@ -217,6 +228,7 @@ def fetch_ashby(company: str, url: str, context: Dict[str, Any]) -> FetchResult:
             source="Ashby",
             posted=_iso_date(job.get("publishedAt")),
             summary=_plain(job.get("descriptionPlain") or job.get("descriptionHtml")),
+            description=_full(job.get("descriptionPlain") or job.get("descriptionHtml")),
         ))
     return FetchResult(postings=postings, ats="Ashby",
                        note="%d role(s) on the Ashby board" % len(postings))
@@ -270,6 +282,7 @@ def fetch_workable(company: str, url: str, context: Dict[str, Any]) -> FetchResu
             source="Workable",
             posted=_iso_date(job.get("published_on") or job.get("created_at")),
             summary=_plain(job.get("description")),
+            description=_full(job.get("description")),
         ))
     return FetchResult(postings=postings, ats="Workable",
                        note="%d role(s) on the Workable board" % len(postings))
@@ -353,6 +366,7 @@ def fetch_workday(company: str, url: str, context: Dict[str, Any]) -> FetchResul
         if info.get("externalUrl"):
             posting.url = str(info["externalUrl"])
         posting.summary = _plain(info.get("jobDescription"))
+        posting.description = _full(info.get("jobDescription"))
 
     postings = list(seen.values())
     return FetchResult(postings=postings, ats="Workday",
@@ -429,6 +443,7 @@ def _parse_icims(company: str, page: str) -> List[Posting]:
             # honest; the listing being on the live board is what vouches for it.
             posted="",
             summary=_plain(description.group("text")) if description else "",
+            description=_full(description.group("text")) if description else "",
         ))
     return postings
 
@@ -540,6 +555,7 @@ def fetch_ultipro(company: str, url: str, context: Dict[str, Any]) -> FetchResul
             source="UltiPro",
             posted=_iso_date(job.get("PostedDate")),
             summary=_plain(job.get("BriefDescription")),
+            description=_full(job.get("BriefDescription")),
         ))
     return FetchResult(postings=postings, ats="UltiPro",
                        note="%d role(s) on the UltiPro board" % len(postings))
@@ -648,7 +664,8 @@ def _ldjson_posting(company: str, url: str, page: str) -> Optional[Posting]:
             company=company, title=str(data.get("title") or "").strip(),
             location="; ".join(where), url=url, source=".jobs",
             posted=_iso_date(data.get("datePosted")),
-            summary=_plain(data.get("description")))
+            summary=_plain(data.get("description")),
+            description=_full(data.get("description")))
     return None
 
 
