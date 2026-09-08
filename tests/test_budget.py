@@ -25,16 +25,17 @@ def test_no_cap_by_default_never_refuses(tmp_path):
     budget = Budget(cap_usd=0.0, store=NullSpendStore())
     assert not budget.enabled
     budget.record(500.0)
-    budget.check()  # must not raise
+    budget.reserve()  # must not raise
 
 
 def test_refuses_before_the_call_that_would_breach(tmp_path):
     budget = Budget(cap_usd=10.0, store=store(tmp_path), reserve_usd=1.0)
     budget.record(8.90)
-    budget.check()  # worst case 9.90, still inside
-    budget.record(0.20)
+    budget.reserve()  # worst case 9.90, still inside
+    budget.record(0.20 - 1.00)  # settle that reservation cheaply
+    budget.record(1.00)
     with pytest.raises(BudgetExceeded):
-        budget.check()  # worst case 10.10, refused
+        budget.reserve()  # worst case 10.10, refused
 
 
 def test_worst_case_never_exceeds_the_cap(tmp_path):
@@ -44,10 +45,10 @@ def test_worst_case_never_exceeds_the_cap(tmp_path):
     calls = 0
     while True:
         try:
-            budget.check()
+            with budget.call() as billed:
+                billed.cost = 0.5   # the reservation turning out to be exact
         except BudgetExceeded:
             break
-        budget.record(0.5)      # the reservation turning out to be exact
         calls += 1
         assert calls < 100, "budget never refused"
     assert budget.spent_today() <= 5.0
@@ -64,7 +65,7 @@ def test_yesterdays_spending_does_not_count_against_today(tmp_path):
     s.add(yesterday, 9.99)
     budget = Budget(cap_usd=10.0, store=s, reserve_usd=1.0)
     assert budget.spent_today() == 0.0
-    budget.check()
+    budget.reserve()
 
 
 def test_a_truncated_ledger_does_not_silently_reset_the_cap(tmp_path):
@@ -146,3 +147,49 @@ def test_from_settings_picks_up_the_configured_cap(tmp_path):
 
     assert not Budget.from_settings(
         SimpleNamespace(daily_budget_usd=0.0, data_dir=tmp_path)).enabled
+
+
+def test_concurrent_callers_cannot_all_pass_the_same_check(tmp_path):
+    """The bug a real run found. rank_postings scores in four threads; all
+    four asked whether there was room, all four were told yes, and all four
+    then spent -- $10.33 against a $10 cap.
+
+    A check that does not also claim the money is a hint, not a check.
+    """
+    import concurrent.futures as futures
+
+    budget = Budget(cap_usd=10.0, store=store(tmp_path), reserve_usd=1.0)
+
+    def attempt(_):
+        try:
+            with budget.call() as billed:
+                billed.cost = 1.0
+            return True
+        except BudgetExceeded:
+            return False
+
+    with futures.ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(attempt, range(40)))
+
+    assert sum(results) == 10
+    assert budget.spent_today() <= 10.0
+
+
+def test_a_call_that_raises_gives_its_reservation_back(tmp_path):
+    """An exception before the API answered is usually a call that was never
+    billed. Keeping the reservation would leak the cap away over a run of
+    failures -- the budget would shrink without anything being spent."""
+    budget = Budget(cap_usd=10.0, store=store(tmp_path), reserve_usd=1.0)
+    for _ in range(20):
+        with pytest.raises(ValueError):
+            with budget.call():
+                raise ValueError("connection reset")
+    assert budget.spent_today() == pytest.approx(0.0)
+    budget.reserve()  # still room
+
+
+def test_settling_hands_back_the_unused_reservation(tmp_path):
+    budget = Budget(cap_usd=10.0, store=store(tmp_path), reserve_usd=1.0)
+    with budget.call() as billed:
+        billed.cost = 0.02
+    assert budget.spent_today() == pytest.approx(0.02)

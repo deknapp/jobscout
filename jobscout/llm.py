@@ -429,11 +429,11 @@ class LLM:
                          "Reply with the JSON value ONLY — no prose, no code fence.")
             # Per attempt, not per call: a reply that fails to parse was
             # still billed, and a retry is a second billed call.
-            self.budget.check()
-            response = self.backend.complete(ask, model=model, system=system,
-                                             tools=tools, timeout=self.timeout)
+            with self.budget.call() as billed:
+                response = self.backend.complete(ask, model=model, system=system,
+                                                 tools=tools, timeout=self.timeout)
+                billed.cost = response.cost_usd
             self.usage.add(response)
-            self.budget.record(response.cost_usd)
             text = response.text
             try:
                 return extract_json(text)

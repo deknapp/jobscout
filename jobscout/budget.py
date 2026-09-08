@@ -13,9 +13,17 @@ and it refuses rather than warns.
 **A cap cannot be exact, and pretending otherwise would be the bug.** The cost
 of a call is only known after the API reports its token counts, so a check
 that waited for the true number would always be one call too late. Instead a
-conservative *reservation* is checked before the call and reconciled with the
-real figure after. Spending therefore stops at or below the cap, never above
-it — at the price of refusing a call that might have fit.
+conservative *reservation* is written to the ledger before the call and
+reconciled with the real figure after. Spending therefore stops at or below
+the cap, never above it — at the price of refusing a call that might have fit.
+
+**The reservation and the check must be one atomic step**, which the first
+version of this module got wrong and a real run proved: ``rank_postings``
+scores in four threads, all four asked "is there room?", all four were told
+yes, and all four then spent. $10.33 against a $10 cap. A check that does not
+also claim the money is not a check, it is a hint. So the ledger is read,
+tested and written under a single lock, and the reservation is released or
+settled afterwards.
 
 The store is deliberately swappable. A single CLI run wants a file; several
 worker pods sharing one budget want a row in Postgres they can update
@@ -23,13 +31,15 @@ atomically. The rule being enforced is the same either way.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
+import fcntl
 import json
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Protocol
+from typing import Dict, Iterator, Optional, Protocol
 
 #: What a single call is assumed to cost before it is made. A strong-model
 #: call with web search is the expensive case: eight searches at $0.01 plus
@@ -55,9 +65,18 @@ class BudgetExceeded(RuntimeError):
 
 
 class SpendStore(Protocol):
-    """Where the running total lives."""
+    """Where the running total lives.
+
+    ``reserve`` is the important one: it must test the cap and claim the money
+    in a single atomic step, or concurrent callers will all pass the test
+    before any of them claims anything.
+    """
 
     def spent_on(self, day: str) -> float: ...
+
+    def reserve(self, day: str, amount: float, cap: float) -> bool: ...
+
+    def adjust(self, day: str, delta: float) -> float: ...
 
     def add(self, day: str, amount: float) -> float: ...
 
@@ -67,13 +86,30 @@ class SpendStore(Protocol):
 class FileSpendStore:
     """A JSON file next to the rest of jobscout's state.
 
-    Correct for one process at a time, which is what the CLI is. Writes go
-    through a temporary file and a rename so an interrupted write cannot leave
-    a truncated ledger — losing the day's total would silently reset the cap.
+    Safe across the threads jobscout actually uses and across separate
+    processes on one machine, because every read-modify-write happens while
+    holding an exclusive lock on a sibling lockfile. Writes go through a
+    temporary file and a rename, so an interrupted write cannot leave a
+    truncated ledger — losing the day's total would silently reset the cap.
+
+    Not safe across machines. Worker pods sharing one budget need the same
+    logic in a database that can do it in one statement; that is why the
+    interface is a Protocol and not this class.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.lock_path = path.with_suffix(path.suffix + ".lock")
+
+    @contextlib.contextmanager
+    def _locked(self) -> Iterator[None]:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.lock_path, "a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def _read(self) -> Dict[str, float]:
         try:
@@ -96,23 +132,46 @@ class FileSpendStore:
             raise
 
     def spent_on(self, day: str) -> float:
-        return self._read().get(day, 0.0)
+        with self._locked():
+            return self._read().get(day, 0.0)
+
+    def reserve(self, day: str, amount: float, cap: float) -> bool:
+        """Claim ``amount`` against the cap, or refuse. One atomic step."""
+        with self._locked():
+            data = self._read()
+            spent = data.get(day, 0.0)
+            if spent + amount > cap:
+                return False
+            data[day] = spent + amount
+            self._write(data)
+            return True
+
+    def adjust(self, day: str, delta: float) -> float:
+        with self._locked():
+            data = self._read()
+            total = max(0.0, data.get(day, 0.0) + delta)
+            data[day] = total
+            self._write(data)
+            return total
 
     def add(self, day: str, amount: float) -> float:
-        data = self._read()
-        total = data.get(day, 0.0) + amount
-        data[day] = total
-        self._write(data)
-        return total
+        return self.adjust(day, amount)
 
     def history(self) -> Dict[str, float]:
-        return dict(sorted(self._read().items()))
+        with self._locked():
+            return dict(sorted(self._read().items()))
 
 
 class NullSpendStore:
-    """Records nothing. Used when no cap is configured, and by the mock backend."""
+    """Records nothing, refuses nothing. Used when no cap is configured."""
 
     def spent_on(self, day: str) -> float:
+        return 0.0
+
+    def reserve(self, day: str, amount: float, cap: float) -> bool:
+        return True
+
+    def adjust(self, day: str, delta: float) -> float:
         return 0.0
 
     def add(self, day: str, amount: float) -> float:
@@ -120,6 +179,19 @@ class NullSpendStore:
 
     def history(self) -> Dict[str, float]:
         return {}
+
+
+@dataclass
+class Reservation:
+    """Money claimed for one call, not yet reconciled."""
+
+    budget: "Budget"
+    amount: float
+    day: str
+    #: What the call actually cost. Left at zero if it never reached the API,
+    #: which releases the whole reservation.
+    cost: float = 0.0
+    settled: bool = False
 
 
 @dataclass
@@ -151,21 +223,51 @@ class Budget:
     def remaining(self) -> float:
         return max(0.0, self.cap_usd - self.spent_today()) if self.enabled else float("inf")
 
-    def check(self, reserve_usd: float | None = None) -> None:
-        """Refuse a call that could take the day past its cap.
+    def reserve(self, reserve_usd: float | None = None) -> "Reservation":
+        """Claim room for one call, or refuse.
 
-        Called before the request, not after, which is the only ordering that
-        can actually prevent an overspend.
+        The claim is written to the ledger immediately, before the call is
+        made. That is what makes it safe when several threads or pods ask at
+        once: the money is gone the moment it is promised, so the second
+        caller sees the first caller's claim rather than a stale total.
         """
+        amount = self.reserve_usd if reserve_usd is None else reserve_usd
         if not self.enabled:
-            return
-        reserve = self.reserve_usd if reserve_usd is None else reserve_usd
-        spent = self.spent_today()
-        if spent + reserve > self.cap_usd:
-            raise BudgetExceeded(spent, self.cap_usd, reserve)
+            return Reservation(budget=self, amount=0.0, day=self.today())
+        day = self.today()
+        if not self.store.reserve(day, amount, self.cap_usd):
+            raise BudgetExceeded(self.store.spent_on(day), self.cap_usd, amount)
+        return Reservation(budget=self, amount=amount, day=day)
+
+    def settle(self, reservation: "Reservation", actual_usd: float) -> float:
+        """Replace a reservation with what the call really cost.
+
+        The difference can be negative -- reservations are deliberate
+        overestimates -- so this usually hands money back.
+        """
+        if not self.enabled or reservation.settled:
+            return self.spent_today()
+        reservation.settled = True
+        return self.store.adjust(reservation.day, float(actual_usd) - reservation.amount)
+
+    @contextlib.contextmanager
+    def call(self, reserve_usd: float | None = None) -> Iterator["Reservation"]:
+        """Wrap one billed call. Set ``.cost`` on the way out.
+
+        If the call raises, the reservation is released rather than kept --
+        an exception before the API responded is usually a call that was
+        never billed, and holding the reservation would leak the cap away
+        over a run of failures.
+        """
+        reservation = self.reserve(reserve_usd)
+        try:
+            yield reservation
+        finally:
+            self.settle(reservation, reservation.cost)
 
     def record(self, cost_usd: float) -> float:
-        """Reconcile the reservation with what the call actually cost."""
+        """Add a known cost with no reservation. For costs learned after the
+        fact, outside the call path."""
         if not self.enabled or cost_usd <= 0:
             return self.spent_today()
         return self.store.add(self.today(), float(cost_usd))
