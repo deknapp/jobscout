@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import pathlib
 import sys
 import threading
 import time
@@ -619,6 +620,38 @@ def verify(settings: Settings, llm: LLM, postings: Sequence[Posting],
 
 # --- the whole run ---------------------------------------------------------
 
+def _record_cost(settings: Settings, llm) -> None:
+    """Append this run's cost, per stage, to a history file.
+
+    A single run's total is not enough to set an unattended budget with. What
+    a schedule needs is the distribution -- what a warm run costs against a
+    cold one, which stage moves when a setting changes, whether a change
+    actually saved anything. That is a question about several runs, so the
+    answer has to outlive the process.
+    """
+    data_dir = getattr(settings, "data_dir", None)
+    if not llm.usage.calls or data_dir is None:
+        return
+    entry = {
+        "at": dt.datetime.now().isoformat(timespec="seconds"),
+        "calls": llm.usage.calls,
+        "web_searches": llm.usage.web_searches,
+        "cost_usd": round(llm.usage.cost_usd, 6),
+        "stages": {name: {"calls": u.calls, "web_searches": u.web_searches,
+                          "cost_usd": round(u.cost_usd, 6)}
+                   for name, u in llm.usage.stages.items()},
+    }
+    try:
+        path = pathlib.Path(data_dir) / "costs.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except (OSError, TypeError):
+        # Cost history is useful, not load-bearing. A run must not fail
+        # because it could not write its own receipt.
+        pass
+
+
 def _report_usage(llm) -> None:
     """Write the cost summary and per-stage breakdown to stderr, once.
 
@@ -651,6 +684,7 @@ def find(settings: Settings, *, refresh_profile: bool = False,
                     today=today, on_update=on_update)
     finally:
         _report_usage(llm)
+        _record_cost(settings, llm)
 
 
 def _run(settings: Settings, llm: LLM, *, refresh_profile: bool = False,
