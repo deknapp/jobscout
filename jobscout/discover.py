@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urljoin, urlparse
 
+from . import ratelimit
 from .corpus import normalize_company
 
 USER_AGENT = "jobscout/0.1 (+https://github.com/deknapp/jobscout)"
@@ -46,9 +47,33 @@ MAX_PROBES = 14
 
 Getter = Callable[[str], Tuple[int, str]]
 
+#: Every probe passes through this. A LocalLimiter is right for one CLI
+#: process; the service swaps in a Redis-backed one at startup, because ten
+#: pods each politely limiting themselves still means ten times the traffic
+#: arriving at Greenhouse.
+_limiter: ratelimit.Limiter = ratelimit.LocalLimiter()
+
+
+def set_limiter(limiter: ratelimit.Limiter) -> None:
+    """Replace the shared rate limiter. Called once, at process start."""
+    global _limiter
+    _limiter = limiter
+
+
+class RateLimited(RuntimeError):
+    """A domain would not give us an allowance in reasonable time."""
+
 
 def _http_get(url: str) -> Tuple[int, str]:
-    """Return (status, body). Never raises for an HTTP error status."""
+    """Return (status, body). Never raises for an HTTP error status.
+
+    Waits for the domain's allowance first. A refusal here is reported as a
+    failed fetch rather than an exception: to every caller, "this board would
+    not answer in time" and "we chose not to ask yet" have the same meaning --
+    no answer, try the next thing.
+    """
+    if not ratelimit.acquire(_limiter, url):
+        return 0, ""
     request = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT,
         "Accept": "application/json, text/html;q=0.9",
