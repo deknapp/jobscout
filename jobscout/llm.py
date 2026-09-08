@@ -34,6 +34,8 @@ import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from .budget import Budget, NullSpendStore
+
 WEB_TOOLS = ("WebSearch", "WebFetch")
 
 
@@ -389,12 +391,17 @@ class LLM:
     """Backend-agnostic front door used by every agent."""
 
     def __init__(self, backend: Backend, *, model_cheap: str, model_strong: str,
-                 timeout: int = 600) -> None:
+                 timeout: int = 600, budget: Optional["Budget"] = None) -> None:
         self.backend = backend
         self.model_cheap = model_cheap
         self.model_strong = model_strong
         self.timeout = timeout
         self.usage = Usage()
+        # Usage is per-process and resets every run; the budget is per-day and
+        # persists. They answer different questions -- "what did this run
+        # cost" and "how much is left today" -- and the second is the one that
+        # can stop a call happening.
+        self.budget = budget or Budget(cap_usd=0.0, store=NullSpendStore())
 
     @classmethod
     def from_settings(cls, settings) -> "LLM":
@@ -406,7 +413,8 @@ class LLM:
             backend = MockBackend()
         return cls(backend, model_cheap=settings.model_cheap,
                    model_strong=settings.model_strong,
-                   timeout=settings.timeout_seconds)
+                   timeout=settings.timeout_seconds,
+                   budget=Budget.from_settings(settings))
 
     def ask_json(self, prompt: str, *, strong: bool = False, system: str = "",
                  web: bool = False, retries: int = 1) -> Any:
@@ -419,9 +427,13 @@ class LLM:
             ask = prompt if attempt == 0 else (
                 prompt + "\n\nYour previous reply could not be parsed as JSON. "
                          "Reply with the JSON value ONLY — no prose, no code fence.")
+            # Per attempt, not per call: a reply that fails to parse was
+            # still billed, and a retry is a second billed call.
+            self.budget.check()
             response = self.backend.complete(ask, model=model, system=system,
                                              tools=tools, timeout=self.timeout)
             self.usage.add(response)
+            self.budget.record(response.cost_usd)
             text = response.text
             try:
                 return extract_json(text)

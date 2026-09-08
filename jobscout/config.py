@@ -173,6 +173,13 @@ class Settings:
     max_per_company: int = 1
     #: Concurrency for the per-query / per-candidate agent calls.
     max_workers: int = 4
+    #: Hard ceiling on what jobscout may spend on model calls in one day,
+    #: in USD. Zero means no cap, which is the right default for the CLI --
+    #: you are sitting there watching it. Set one before anything runs
+    #: unattended: a scheduled pipeline with no cap is a bill with no ceiling.
+    #: Enforced in jobscout/budget.py, below the agents, at the single seam
+    #: every model call passes through.
+    daily_budget_usd: float = 0.0
     #: Seconds before a single agent call is abandoned.
     timeout_seconds: int = 600
     location: LocationPolicy = field(default_factory=LocationPolicy)
@@ -414,6 +421,7 @@ def load_settings(require_applications: bool = True) -> Settings:
         applications_dir=applications_dir,
         data_dir=data_dir,
         backend=backend,
+        daily_budget_usd=float(_env("JOBSCOUT_DAILY_BUDGET_USD", "0") or 0),
         model_cheap=_env("JOBSCOUT_MODEL_CHEAP", "claude-haiku-4-5"),
         model_strong=_env("JOBSCOUT_MODEL_STRONG", "claude-opus-5"),
         max_age_days=_env_int("JOBSCOUT_MAX_AGE_DAYS", 30),

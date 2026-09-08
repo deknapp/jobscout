@@ -32,6 +32,7 @@ from typing import List, Optional, Sequence
 
 from . import __version__, report
 from .companies import Company, IGNORED, NEW, Registry
+from .budget import Budget
 from .config import (ConfigError, DEFAULT_DATA_DIR, ENV_FILE, LocationPolicy, Settings,
                      load_settings, redact, save_location_policy)
 from .corpus import load_corpus, summarize
@@ -149,6 +150,7 @@ def cmd_status(args: argparse.Namespace) -> int:
           % (settings.backend, settings.model_cheap, settings.model_strong))
     print("  applications  %s" % redact(settings.applications_dir))
     print("  data dir      %s" % redact(settings.data_dir))
+    print("  budget        %s" % Budget.from_settings(settings).summary())
     print("  location      %s" % settings.location.summary())
     print("      states    %s" % (", ".join(settings.location.allowed_states) or "(none)"))
     print("      cities    %s" % (", ".join(settings.location.allowed_cities) or "(none)"))
