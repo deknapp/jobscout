@@ -189,6 +189,9 @@ def cmd_profile(args: argparse.Namespace) -> int:
     print(json.dumps(profile, indent=2, ensure_ascii=False))
     if args.refresh:
         sys.stderr.write("\n%s\n" % llm.usage.summary())
+        breakdown = llm.usage.breakdown()
+        if breakdown:
+            sys.stderr.write("%s\n" % breakdown)
     return 0
 
 

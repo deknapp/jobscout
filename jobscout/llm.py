@@ -52,19 +52,46 @@ class Response:
 
 
 @dataclass
-class Usage:
+class StageUsage:
     calls: int = 0
     cost_usd: float = 0.0
     web_searches: int = 0
 
-    def add(self, response: Response) -> None:
+
+@dataclass
+class Usage:
+    calls: int = 0
+    cost_usd: float = 0.0
+    web_searches: int = 0
+    #: Per-stage totals. One number for a whole run says a run was expensive;
+    #: it does not say which stage to fix, and optimising without that is
+    #: guessing. Keyed by the name the call site passes.
+    stages: Dict[str, StageUsage] = field(default_factory=dict)
+
+    def add(self, response: Response, stage: str = "") -> None:
         self.calls += 1
         self.cost_usd += response.cost_usd
         self.web_searches += response.web_searches
+        entry = self.stages.setdefault(stage or "unattributed", StageUsage())
+        entry.calls += 1
+        entry.cost_usd += response.cost_usd
+        entry.web_searches += response.web_searches
 
     def summary(self) -> str:
         return "%d model call(s), %d web search(es), $%.4f" % (
             self.calls, self.web_searches, self.cost_usd)
+
+    def breakdown(self) -> str:
+        """Where the money went, most expensive first."""
+        if not self.stages:
+            return ""
+        rows = sorted(self.stages.items(), key=lambda kv: -kv[1].cost_usd)
+        width = max(len(name) for name, _ in rows)
+        lines = ["  %-*s  %5d call(s)  %4d search(es)  $%7.4f  %5.1f%%" % (
+            width, name, u.calls, u.web_searches, u.cost_usd,
+            100.0 * u.cost_usd / self.cost_usd if self.cost_usd else 0.0)
+            for name, u in rows]
+        return "\n".join(lines)
 
 
 # --- JSON handling ---------------------------------------------------------
@@ -417,7 +444,7 @@ class LLM:
                    budget=Budget.from_settings(settings))
 
     def ask_json(self, prompt: str, *, strong: bool = False, system: str = "",
-                 web: bool = False, retries: int = 1) -> Any:
+                 web: bool = False, retries: int = 1, stage: str = "") -> Any:
         model = self.model_strong if strong else self.model_cheap
         tools = WEB_TOOLS if web else ()
         attempt = 0
@@ -433,7 +460,7 @@ class LLM:
                 response = self.backend.complete(ask, model=model, system=system,
                                                  tools=tools, timeout=self.timeout)
                 billed.cost = response.cost_usd
-            self.usage.add(response)
+            self.usage.add(response, stage)
             text = response.text
             try:
                 return extract_json(text)

@@ -271,10 +271,11 @@ def read(messages: Sequence[Message], company: str, llm, today: Optional[dt.date
     # cheap model is not stable at it: across two runs on the same mailbox it
     # filed a rejection under a different requisition each time. There are only
     # a few dozen calls in a run, so the accuracy is worth the money.
-    payload = llm.ask_json(PROMPT % {"today": today.isoformat(),
-                                     "company": company,
-                                     "digest": digest(messages)},
-                           system=SYSTEM, strong=True)
+    payload = llm.ask_json(
+        PROMPT % {"today": today.isoformat(),
+                  "company": company,
+                  "digest": digest(messages)},
+        system=SYSTEM, strong=True, stage="pursuits")
     if isinstance(payload, dict):
         payload = [payload]
     found: List[Pursuit] = []

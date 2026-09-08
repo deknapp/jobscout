@@ -148,7 +148,7 @@ MATERIALS
 =========
 %s""" % (applied, "\n\n".join(blocks))
 
-    data = llm.ask_json(prompt, strong=True, system=SYSTEM)
+    data = llm.ask_json(prompt, strong=True, system=SYSTEM, stage="profile")
     if not isinstance(data, dict):
         raise LLMError("profile agent returned %s, expected an object" % type(data).__name__)
     data["generated"] = dt.date.today().isoformat()
@@ -283,7 +283,8 @@ CANDIDATE PROFILE
           angle or "Any employer who fits this candidate.",
           known_block, count, json.dumps(profile, indent=2)[:6000])
 
-    data = llm.ask_json(prompt, strong=True, system=SYSTEM, web=True)
+    data = llm.ask_json(prompt, strong=True, system=SYSTEM, web=True,
+                        stage="propose_employers")
     if isinstance(data, dict):
         data = data.get("companies") or data.get("employers") or []
     companies: List[Company] = []
@@ -358,7 +359,7 @@ Return ONLY:
 Context on this employer: %s""" % (company.name, _source_block(),
                                    company.why or company.presence or "(none)")
 
-    data = llm.ask_json(prompt, system=SYSTEM, web=True)
+    data = llm.ask_json(prompt, system=SYSTEM, web=True, stage="resolve_board")
     if not isinstance(data, dict):
         return {"careers_url": "", "ats": "", "note": "unusable response"}
     return {
@@ -423,7 +424,7 @@ Return ONLY a JSON array:
         ", ".join(skills[:12]) or "(unspecified)",
         profile.get("seniority") or "senior")
 
-    data = llm.ask_json(prompt, system=SYSTEM, web=True)
+    data = llm.ask_json(prompt, system=SYSTEM, web=True, stage="scan_board")
     if isinstance(data, dict):
         data = data.get("postings") or data.get("jobs") or data.get("roles") or []
     postings: List[Posting] = []
@@ -481,7 +482,7 @@ Meaning of each status:
         posting.url, posting.title, posting.company, posting.location or "unstated")
 
     try:
-        data = llm.ask_json(prompt, system=SYSTEM, web=True)
+        data = llm.ask_json(prompt, system=SYSTEM, web=True, stage="verify_posting")
     except LLMError as exc:
         return {"status": "unreachable", "note": str(exc)[:200]}
     if not isinstance(data, dict):
@@ -582,7 +583,7 @@ POSTINGS
          json.dumps(listing, indent=2))
 
     try:
-        data = llm.ask_json(prompt, strong=True, system=SYSTEM)
+        data = llm.ask_json(prompt, strong=True, system=SYSTEM, stage="rank_postings")
     except LLMError:
         return {}      # one bad batch must not cost the whole run its scores
     if isinstance(data, dict):
