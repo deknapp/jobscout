@@ -69,9 +69,19 @@ class Weights:
                        recency=self.recency / total, halflife_days=self.halflife_days)
 
     def describe(self) -> str:
+        """Say what the numbers mean now that recency is not a third share.
+
+        This read "fit 45% · likelihood 30% · recency 25%" while recency was an
+        addend. It is a multiplier, so the old line described a formula the
+        code no longer used, at the top of every report.
+        """
         norm = self.normalized()
-        return ("fit %d%% · likelihood %d%% · recency %d%% (half-life %.0f days)"
-                % (round(norm.fit * 100), round(norm.likelihood * 100),
+        merit = norm.fit + norm.likelihood
+        if merit <= 0:
+            return "no weighting"
+        return ("fit %d%% · likelihood %d%%, then up to %d%% off for staleness "
+                "(half-life %.0f days)"
+                % (round(norm.fit / merit * 100), round(norm.likelihood / merit * 100),
                    round(norm.recency * 100), self.halflife_days))
 
 
